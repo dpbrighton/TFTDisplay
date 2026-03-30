@@ -7,4 +7,5 @@ services:
     volumes:
       - /volume1/Photos:/photos:ro
       - /volume1/docker/tft-config:/config
+      - /volume1/docker/nas-server/app.py:/app/app.py:ro
     restart: unless-stopped
