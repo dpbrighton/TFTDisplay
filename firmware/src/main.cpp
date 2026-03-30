@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <Preferences.h>
+#include <TJpg_Decoder.h>
 #include "config.h"
 
 // ── Hardware ────────────────────────────────────────────────
@@ -49,7 +50,14 @@ struct DashState {
 DashState dash;
 DashState prev;   // previous state for smart redraw
 
-unsigned long lastPoll = 0;
+unsigned long lastPoll      = 0;
+unsigned long lastTouchTime = 0;
+unsigned long lastPhotoTime = 0;
+bool          screensaverActive  = false;
+int           photoDisplaySeconds = 10;
+
+// JPEG receive buffer — 55KB handles a 320×240 JPEG at quality 85
+static uint8_t jpegBuf[55000];
 
 // ── HA REST helpers ─────────────────────────────────────────
 String haGet(const char* entity) {
@@ -218,6 +226,71 @@ void drawHeatingSection() {
     drawBtn(HTG_PLUS_X, y + HTG_BTN_Y_OFF, HTG_BTN_W, HTG_BTN_H, "+", true, C_DIVIDER);
 }
 
+// Forward declaration
+void drawAll();
+
+// ── Screensaver / Photo slideshow ───────────────────────────
+
+// TJpgDec callback — push each decoded line to the display
+bool jpegOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+    tft.pushImage(x, y, w, h, bitmap);
+    return true;
+}
+
+void fetchPhotoSettings() {
+    HTTPClient http;
+    char url[128];
+    snprintf(url, sizeof(url), "http://%s:%d/settings", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT);
+    http.begin(url);
+    if (http.GET() == 200) {
+        JsonDocument doc;
+        deserializeJson(doc, http.getString());
+        photoDisplaySeconds = doc["display_seconds"] | 10;
+    }
+    http.end();
+}
+
+void showNextPhoto() {
+    HTTPClient http;
+    char url[128];
+    snprintf(url, sizeof(url), "http://%s:%d%s", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT, PHOTO_ENDPOINT);
+    http.begin(url);
+    int code = http.GET();
+    if (code == 200) {
+        int len = http.getSize();
+        WiFiClient* stream = http.getStreamPtr();
+        size_t got = 0;
+        if (len > 0 && len <= (int)sizeof(jpegBuf)) {
+            got = stream->readBytes(jpegBuf, len);
+        } else {
+            // chunked transfer — read until done
+            while ((stream->available() || http.connected()) && got < sizeof(jpegBuf)) {
+                int avail = stream->available();
+                if (avail > 0) got += stream->readBytes(jpegBuf + got, min(avail, (int)(sizeof(jpegBuf) - got)));
+                else delay(1);
+            }
+        }
+        if (got > 0) TJpgDec.drawJpg(0, 0, jpegBuf, got);
+    }
+    http.end();
+    lastPhotoTime = millis();
+}
+
+void enterScreensaver() {
+    screensaverActive = true;
+    fetchPhotoSettings();
+    tft.fillScreen(TFT_BLACK);
+    showNextPhoto();
+}
+
+void exitScreensaver() {
+    screensaverActive = false;
+    lastTouchTime = millis();
+    tft.fillScreen(C_BG);
+    pollHA();
+    drawAll();
+}
+
 // Full redraw (boot / first paint only)
 void drawAll() {
     drawHeader();
@@ -274,6 +347,14 @@ void handleTouch() {
     uint16_t tx, ty;
     if (!tft.getTouch(&tx, &ty)) return;
     delay(80); // simple debounce
+
+    // Any touch exits screensaver
+    if (screensaverActive) {
+        exitScreensaver();
+        return;
+    }
+
+    lastTouchTime = millis(); // reset idle timer
 
     int w    = DIV_X;
     int btnY = HDR_H + MID_H - BTN_H - 10;
@@ -364,6 +445,11 @@ void setup() {
 
     touchSetup();
 
+    // Set up JPEG decoder
+    TJpgDec.setJpgScale(1);
+    TJpgDec.setSwapBytes(true);
+    TJpgDec.setCallback(jpegOutput);
+
     tft.fillScreen(TFT_BLACK);
     tft.setTextSize(1);
     tft.drawString("Loading dashboard...", SCREEN_W / 2, SCREEN_H / 2);
@@ -371,12 +457,28 @@ void setup() {
     pollHA();
     tft.fillScreen(C_BG);   // one-time clear before first paint
     drawAll();
+    lastTouchTime = millis();  // start idle timer after dashboard is ready
 }
 
 // ── Loop ────────────────────────────────────────────────────
 void loop() {
     handleTouch();
 
+    if (screensaverActive) {
+        // Advance to next photo when display time expires
+        if (millis() - lastPhotoTime > (unsigned long)photoDisplaySeconds * 1000UL) {
+            showNextPhoto();
+        }
+        return;
+    }
+
+    // Activate screensaver after idle timeout
+    if (millis() - lastTouchTime > SCREENSAVER_TIMEOUT) {
+        enterScreensaver();
+        return;
+    }
+
+    // Periodic HA state refresh
     if (millis() - lastPoll > DASHBOARD_POLL_MS) {
         lastPoll = millis();
         checkWifi();
