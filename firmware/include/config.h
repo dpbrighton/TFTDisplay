@@ -9,14 +9,18 @@
 // ============================================================
 // Home Assistant
 // ============================================================
-#define HA_HOST    "homeassistant.local"   // or IP address of your Pi
+#define HA_HOST    "192.168.0.38"
 #define HA_PORT    8123
-#define HA_TOKEN   "YOUR_LONG_LIVED_HA_TOKEN"
+#define HA_TOKEN   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIyOTExZmM1MWU4ZTY0OWQ0YmMwYWNhMzcxMjdlNDJhMSIsImlhdCI6MTc3NDg2NzUyMywiZXhwIjoyMDkwMjI3NTIzfQ.pbE91lwKY8Gqx3wWH-JNsxDiJfTL_xb14_aFAd8Bgv4"
 
-// Home Assistant entity IDs — update these to match yours
-#define ENTITY_LAMPS          "light.living_room_lamps"         // group or scene
-#define ENTITY_DRAWING_LIGHTS "light.drawing_room_lights"       // group for lights 1-4
-#define ENTITY_TRV            "climate.living_room_trv"
+// Home Assistant entity IDs
+#define ENTITY_DR_LIGHT_1     "light.drawing_room_light_1"
+#define ENTITY_DR_LIGHT_2     "light.drawing_room_light_2"
+#define ENTITY_DR_LIGHT_3     "light.drawing_room_light_3"
+#define ENTITY_DR_LIGHT_4     "light.drawing_room_light_4"
+#define ENTITY_OLD_LAMP       "light.old_lamp"
+#define ENTITY_LAMP_SOCKET    "switch.living_room_lamp_socket_1"
+#define ENTITY_TRV            "climate.living_room"
 
 // ============================================================
 // NAS Photo Server (Phase 2)
