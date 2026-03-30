@@ -252,6 +252,7 @@ void fetchPhotoSettings() {
 
 void showNextPhoto() {
     HTTPClient http;
+    http.setTimeout(10000);
     char url[128];
     snprintf(url, sizeof(url), "http://%s:%d%s", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT, PHOTO_ENDPOINT);
     http.begin(url);
@@ -260,17 +261,34 @@ void showNextPhoto() {
         int len = http.getSize();
         WiFiClient* stream = http.getStreamPtr();
         size_t got = 0;
+
+        // Allow up to 15s between bytes — handles slow Flask image processing
+        stream->setTimeout(15000);
+
         if (len > 0 && len <= (int)sizeof(jpegBuf)) {
-            got = stream->readBytes(jpegBuf, len);
+            // Known length — readBytes blocks until all len bytes received or timeout
+            got = stream->readBytes((char*)jpegBuf, len);
         } else {
-            // chunked transfer — read until done
-            while ((stream->available() || http.connected()) && got < sizeof(jpegBuf)) {
-                int avail = stream->available();
-                if (avail > 0) got += stream->readBytes(jpegBuf + got, min(avail, (int)(sizeof(jpegBuf) - got)));
-                else delay(1);
+            // Chunked / unknown length — read until stream closes
+            uint8_t chunk[512];
+            int n;
+            while (got < sizeof(jpegBuf)) {
+                n = stream->readBytes((char*)chunk, sizeof(chunk));
+                if (n <= 0) break;
+                memcpy(jpegBuf + got, chunk, n);
+                got += n;
             }
         }
-        if (got > 0) TJpgDec.drawJpg(0, 0, jpegBuf, got);
+
+        if (len > 0 && got == (size_t)len) {
+            tft.fillScreen(TFT_BLACK);
+            TJpgDec.drawJpg(0, 0, jpegBuf, got);
+        } else if (len <= 0 && got > 0) {
+            tft.fillScreen(TFT_BLACK);
+            TJpgDec.drawJpg(0, 0, jpegBuf, got);
+        } else {
+            Serial.printf("Photo incomplete: got %d of %d bytes\n", got, len);
+        }
     }
     http.end();
     lastPhotoTime = millis();
