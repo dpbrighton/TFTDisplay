@@ -37,14 +37,17 @@ Preferences prefs;
 #define C_SUBTEXT  0xC618   // light grey
 
 // ── State ───────────────────────────────────────────────────
-struct {
+struct DashState {
     bool  drOn    = false;
     bool  lampsOn = false;
     float curTemp = 0.0f;
     float tgtTemp = 20.0f;
     bool  hvacOn  = false;
     bool  wifiOk  = false;
-} dash;
+};
+
+DashState dash;
+DashState prev;   // previous state for smart redraw
 
 unsigned long lastPoll = 0;
 
@@ -175,44 +178,71 @@ void drawLightSection(int startX, const char* title, bool isOn) {
     drawBtn(btnOffX, btnY, BTN_W, BTN_H, "OFF", !isOn, C_OFF_ACT);
 }
 
+// Heating button positions — large for easy finger press
+#define HTG_BTN_W   60
+#define HTG_BTN_H   48
+#define HTG_BTN_Y_OFF 8                        // offset from top of heating strip
+#define HTG_MINUS_X   5                        // left edge of minus button
+#define HTG_PLUS_X    (SCREEN_W - HTG_BTN_W - 5)  // left edge of plus button
+
 void drawHeatingSection() {
     int y  = SCREEN_H - HTG_H;
     uint16_t bg = dash.hvacOn ? 0x2000 : (uint16_t)C_BG;
     tft.fillRect(0, y, SCREEN_W, HTG_H, bg);
     tft.drawFastHLine(0, y, SCREEN_W, C_DIVIDER);
 
-    // Label
+    // HEATING label top-left
     tft.setTextColor(dash.hvacOn ? (uint16_t)C_WARM : (uint16_t)C_SUBTEXT, bg);
     tft.setTextDatum(ML_DATUM);
     tft.setTextSize(1);
-    tft.drawString(dash.hvacOn ? "HEATING" : "HEATING", 10, y + 10);
+    tft.drawString("HEATING", HTG_MINUS_X + HTG_BTN_W + 8, y + 6);
 
-    // Current temp — large, centred
+    // Large - button (left)
+    drawBtn(HTG_MINUS_X, y + HTG_BTN_Y_OFF, HTG_BTN_W, HTG_BTN_H, "-", true, C_DIVIDER);
+
+    // Current temp — large, centred between the two buttons
     char buf[16];
-    snprintf(buf, sizeof(buf), "%.1f C", dash.curTemp);
+    snprintf(buf, sizeof(buf), "%.1fC", dash.curTemp);
     tft.setTextColor(C_TEXT, bg);
     tft.setTextDatum(MC_DATUM);
     tft.setTextSize(3);
-    tft.drawString(buf, SCREEN_W / 2, y + 24);
+    tft.drawString(buf, SCREEN_W / 2, y + 26);
 
-    // Target temp
-    snprintf(buf, sizeof(buf), "Target: %.1f C", dash.tgtTemp);
+    // Target temp below current
+    snprintf(buf, sizeof(buf), ">> %.1fC", dash.tgtTemp);
     tft.setTextSize(1);
     tft.setTextColor(C_SUBTEXT, bg);
     tft.drawString(buf, SCREEN_W / 2, y + 52);
 
-    // - / + buttons flanking the temp
-    drawBtn(SCREEN_W / 2 - 80, y + 34, 28, 22, "-", true, C_DIVIDER);
-    drawBtn(SCREEN_W / 2 + 52, y + 34, 28, 22, "+", true, C_DIVIDER);
+    // Large + button (right)
+    drawBtn(HTG_PLUS_X, y + HTG_BTN_Y_OFF, HTG_BTN_W, HTG_BTN_H, "+", true, C_DIVIDER);
 }
 
+// Full redraw (boot / first paint only)
 void drawAll() {
-    tft.fillScreen(C_BG);
     drawHeader();
     drawLightSection(0,     "DRAWING ROOM LIGHTS", dash.drOn);
     drawLightSection(DIV_X, "LAMPS",               dash.lampsOn);
     tft.drawFastVLine(DIV_X, HDR_H, MID_H, C_DIVIDER);
     drawHeatingSection();
+    prev = dash;
+}
+
+// Partial redraw — only repaint sections that changed (no flicker)
+void refreshChanged() {
+    if (dash.wifiOk  != prev.wifiOk)  drawHeader();
+    if (dash.drOn    != prev.drOn) {
+        drawLightSection(0, "DRAWING ROOM LIGHTS", dash.drOn);
+        tft.drawFastVLine(DIV_X, HDR_H, MID_H, C_DIVIDER);
+    }
+    if (dash.lampsOn != prev.lampsOn) {
+        drawLightSection(DIV_X, "LAMPS", dash.lampsOn);
+        tft.drawFastVLine(DIV_X, HDR_H, MID_H, C_DIVIDER);
+    }
+    if (dash.curTemp != prev.curTemp ||
+        dash.tgtTemp != prev.tgtTemp ||
+        dash.hvacOn  != prev.hvacOn)  drawHeatingSection();
+    prev = dash;
 }
 
 // ── Touch calibration ───────────────────────────────────────
@@ -281,17 +311,19 @@ void handleTouch() {
         }
     }
 
-    // Heating buttons
+    // Heating buttons (large)
     int htgY = SCREEN_H - HTG_H;
-    if (ty >= htgY + 34 && ty <= htgY + 56) {
-        if (tx >= SCREEN_W / 2 - 80 && tx <= SCREEN_W / 2 - 52) {
+    if (ty >= htgY + HTG_BTN_Y_OFF && ty <= htgY + HTG_BTN_Y_OFF + HTG_BTN_H) {
+        if (tx >= HTG_MINUS_X && tx <= HTG_MINUS_X + HTG_BTN_W) {
             adjustTemp(-0.5f);
             drawHeatingSection();
+            prev.curTemp = dash.curTemp; prev.tgtTemp = dash.tgtTemp;
             return;
         }
-        if (tx >= SCREEN_W / 2 + 52 && tx <= SCREEN_W / 2 + 80) {
+        if (tx >= HTG_PLUS_X && tx <= HTG_PLUS_X + HTG_BTN_W) {
             adjustTemp(0.5f);
             drawHeatingSection();
+            prev.curTemp = dash.curTemp; prev.tgtTemp = dash.tgtTemp;
             return;
         }
     }
@@ -337,6 +369,7 @@ void setup() {
     tft.drawString("Loading dashboard...", SCREEN_W / 2, SCREEN_H / 2);
 
     pollHA();
+    tft.fillScreen(C_BG);   // one-time clear before first paint
     drawAll();
 }
 
@@ -348,6 +381,6 @@ void loop() {
         lastPoll = millis();
         checkWifi();
         pollHA();
-        drawAll();
+        refreshChanged();
     }
 }
