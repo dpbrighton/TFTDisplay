@@ -25,7 +25,7 @@
 // ============================================================
 // NAS Photo Server (Phase 2)
 // ============================================================
-#define PHOTO_SERVER_HOST "192.168.1.x"   // NAS IP address
+#define PHOTO_SERVER_HOST "192.168.0.248"
 #define PHOTO_SERVER_PORT 5000
 #define PHOTO_ENDPOINT    "/next-photo"
 

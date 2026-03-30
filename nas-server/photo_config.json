@@ -1,0 +1,8 @@
+{
+    "directories": [
+        "/photos"
+    ],
+    "display_seconds": 10,
+    "shuffle": true,
+    "include_subfolders": true
+}
