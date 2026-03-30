@@ -3,8 +3,8 @@
 // ============================================================
 // WiFi
 // ============================================================
-#define WIFI_SSID     "BE-49"
-#define WIFI_PASSWORD "32Crosslet"
+#define WIFI_SSID     "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
 // ============================================================
 // Home Assistant
