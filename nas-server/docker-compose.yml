@@ -1,0 +1,10 @@
+services:
+  photo-server:
+    build: .
+    container_name: tft-photo-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - /volume1/Photos:/photos:ro
+      - /volume1/docker/tft-config:/config
+    restart: unless-stopped
