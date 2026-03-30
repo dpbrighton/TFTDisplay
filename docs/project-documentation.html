@@ -1,0 +1,517 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>TFT Display — Project Documentation</title>
+<style>
+  body { font-family: -apple-system, Helvetica, sans-serif; font-size: 13px; line-height: 1.6; max-width: 820px; margin: 40px auto; color: #222; }
+  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 6px; }
+  h2 { font-size: 17px; margin-top: 28px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  h3 { font-size: 14px; margin-top: 16px; }
+  table { border-collapse: collapse; width: 100%%; margin: 12px 0; font-size: 12px; }
+  th { background: #333; color: white; padding: 6px 10px; text-align: left; }
+  td { border: 1px solid #ccc; padding: 5px 10px; }
+  tr:nth-child(even) td { background: #f5f5f5; }
+  code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px; }
+  pre { background: #f0f0f0; padding: 12px; border-radius: 4px; font-size: 11px; }
+  blockquote { border-left: 3px solid #aaa; margin: 8px 0; padding-left: 12px; color: #555; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 20px 0; }
+</style></head><body><h1>TFT Living Room Display — Project Documentation</h1>
+<p><strong>Version:</strong> 0.7
+<strong>Date:</strong> March 2026
+<strong>Status:</strong> Phases 1 and 2 complete</p>
+<hr />
+<h2>1. Project Overview</h2>
+<p>A wall-mounted smart display for the living room built around an ESP32 microcontroller and a 3.2" TFT touchscreen. The display serves two purposes:</p>
+<ul>
+<li><strong>Dashboard mode</strong> — shows the current state of living room lights and heating, with touch controls to turn them on and off</li>
+<li><strong>Screensaver mode</strong> — after 60 seconds idle, switches to a photo slideshow pulling images from the home NAS</li>
+</ul>
+<p>A third phase (Eufy doorbell integration) is planned.</p>
+<hr />
+<h2>2. Hardware</h2>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Microcontroller</td>
+<td>ESP32 WROOM-32 (30-pin DevKit, Type-C USB)</td>
+</tr>
+<tr>
+<td>Display</td>
+<td>3.2" SPI TFT, ILI9341 driver, 240×320 resolution</td>
+</tr>
+<tr>
+<td>Screen SKU</td>
+<td>MSP3218</td>
+</tr>
+<tr>
+<td>Touch</td>
+<td>Resistive (XPT2046 controller) — stylus included; large buttons work with finger</td>
+</tr>
+<tr>
+<td>Connection</td>
+<td>Dupont jumper wires</td>
+</tr>
+</tbody>
+</table>
+<h3>2.1 Wiring</h3>
+<table>
+<thead>
+<tr>
+<th>Screen Pin</th>
+<th>ESP32 Pin</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VCC</td>
+<td>3.3V</td>
+<td></td>
+</tr>
+<tr>
+<td>GND</td>
+<td>GND</td>
+<td></td>
+</tr>
+<tr>
+<td>CS</td>
+<td>GPIO 5</td>
+<td>Display chip select</td>
+</tr>
+<tr>
+<td>RESET</td>
+<td>GPIO 4</td>
+<td></td>
+</tr>
+<tr>
+<td>DC</td>
+<td>GPIO 16</td>
+<td><strong>Note: GPIO 2 conflicts with boot — use GPIO 16</strong></td>
+</tr>
+<tr>
+<td>SDI (MOSI)</td>
+<td>GPIO 23</td>
+<td></td>
+</tr>
+<tr>
+<td>SCK</td>
+<td>GPIO 18</td>
+<td>Shared with T_CLK</td>
+</tr>
+<tr>
+<td>LED</td>
+<td>VIN (5V)</td>
+<td>Backlight — 5V gives good brightness</td>
+</tr>
+<tr>
+<td>SDO (MISO)</td>
+<td>GPIO 19</td>
+<td>Shared with T_DO</td>
+</tr>
+<tr>
+<td>T_CLK</td>
+<td>GPIO 18</td>
+<td>Shared with SCK</td>
+</tr>
+<tr>
+<td>T_CS</td>
+<td>GPIO 15</td>
+<td>Touch chip select</td>
+</tr>
+<tr>
+<td>T_DIN</td>
+<td>GPIO 23</td>
+<td>Shared with MOSI</td>
+</tr>
+<tr>
+<td>T_DO</td>
+<td>GPIO 19</td>
+<td>Shared with MISO</td>
+</tr>
+<tr>
+<td>T_IRQ</td>
+<td>GPIO 21</td>
+<td>Touch interrupt</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Important:</strong> GPIO 2 on the ESP32 WROOM-32 is connected to the onboard LED and causes display initialisation to fail if used as the DC pin. Always use GPIO 16 for DC.</p>
+<p><strong>Shared SPI pins:</strong> SCK/T_CLK, MOSI/T_DIN, and MISO/T_DO all share the same ESP32 pins. Connect both screen wires to the same ESP32 pin (twist wire ends together into one Dupont socket).</p>
+</blockquote>
+<hr />
+<h2>3. System Architecture</h2>
+<pre><code>┌─────────────────────┐     WiFi / REST API    ┌──────────────────────┐
+│   ESP32 + TFT       │ ◄────────────────────► │  Home Assistant      │
+│   Living Room       │                         │  Raspberry Pi 5      │
+│   Display           │     WiFi / HTTP         │  192.168.0.38:8123   │
+│   192.168.0.103     │ ◄────────────────────► ├──────────────────────┤
+│                     │                         │  NAS Photo Server    │
+└─────────────────────┘                         │  Docker on DPX2800   │
+                                                 │  192.168.0.248:5000  │
+                                                 └──────────────────────┘
+</code></pre>
+<hr />
+<h2>4. Software — Development Environment</h2>
+<h3>4.1 Mac Toolchain</h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Version</th>
+<th>How installed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Git</td>
+<td>2.50.1</td>
+<td>Apple built-in</td>
+</tr>
+<tr>
+<td>Homebrew</td>
+<td>5.1.1</td>
+<td>brew.sh</td>
+</tr>
+<tr>
+<td>Python 3</td>
+<td>3.14.3</td>
+<td>Homebrew</td>
+</tr>
+<tr>
+<td>Node.js</td>
+<td>25.8.1</td>
+<td>Homebrew</td>
+</tr>
+<tr>
+<td>VS Code</td>
+<td>1.113.0</td>
+<td><code>brew install --cask visual-studio-code</code></td>
+</tr>
+<tr>
+<td>GitHub CLI</td>
+<td>2.89.0</td>
+<td><code>brew install gh</code></td>
+</tr>
+<tr>
+<td>PlatformIO</td>
+<td>latest</td>
+<td>VS Code extension</td>
+</tr>
+<tr>
+<td>Pandoc</td>
+<td>3.9.0</td>
+<td><code>brew install pandoc</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>To replicate this setup on the MacBook Air, install each tool using the same method.</p>
+</blockquote>
+<h3>4.2 Project Repository</h3>
+<ul>
+<li><strong>GitHub:</strong> https://github.com/dpbrighton/TFTDisplay</li>
+<li><strong>Local path (Mac mini):</strong> <code>~/Documents/Claud/TFTDisplay</code></li>
+</ul>
+<h3>4.3 Version Snapshots</h3>
+<table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v0.1-project-start</td>
+<td>Initial structure and README</td>
+</tr>
+<tr>
+<td>v0.2-firmware-skeleton</td>
+<td>PlatformIO project, config, basic WiFi + display</td>
+</tr>
+<tr>
+<td>v0.3-display-working</td>
+<td>Fixed DC pin (GPIO 16), display confirmed working</td>
+</tr>
+<tr>
+<td>v0.4-dashboard-working</td>
+<td>Phase 1 complete — HA dashboard live</td>
+</tr>
+<tr>
+<td>v0.5-dashboard-refined</td>
+<td>No-flicker refresh, larger heating buttons</td>
+</tr>
+<tr>
+<td>v0.6-photo-server-ui</td>
+<td>NAS photo server with web UI for folder selection</td>
+</tr>
+<tr>
+<td>v0.7-screensaver-working</td>
+<td>Phase 2 complete — photo screensaver</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>5. ESP32 Firmware</h2>
+<h3>5.1 Build Tool</h3>
+<p><strong>PlatformIO</strong> (VS Code extension). Open the <code>firmware/</code> folder in VS Code. Use the ✓ button to build and → to upload.</p>
+<h3>5.2 Libraries</h3>
+<table>
+<thead>
+<tr>
+<th>Library</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bodmer/TFT_eSPI</td>
+<td>Display and touch driver</td>
+</tr>
+<tr>
+<td>bblanchon/ArduinoJson</td>
+<td>Parsing Home Assistant JSON responses</td>
+</tr>
+<tr>
+<td>knolleary/PubSubClient</td>
+<td>MQTT (reserved for Phase 3)</td>
+</tr>
+<tr>
+<td>bodmer/TJpg_Decoder</td>
+<td>JPEG decoding for photo slideshow</td>
+</tr>
+</tbody>
+</table>
+<h3>5.3 Configuration</h3>
+<p>Edit <code>firmware/include/config.h</code> before flashing. This file is excluded from Git (credentials). Use <code>config.h.template</code> as a starting point on a new machine.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WIFI_SSID</code> / <code>WIFI_PASSWORD</code></td>
+<td>Home WiFi credentials</td>
+</tr>
+<tr>
+<td><code>HA_HOST</code></td>
+<td>Home Assistant IP (192.168.0.38)</td>
+</tr>
+<tr>
+<td><code>HA_PORT</code></td>
+<td>8123</td>
+</tr>
+<tr>
+<td><code>HA_TOKEN</code></td>
+<td>Long-lived access token from HA profile</td>
+</tr>
+<tr>
+<td><code>PHOTO_SERVER_HOST</code></td>
+<td>NAS IP (192.168.0.248)</td>
+</tr>
+<tr>
+<td><code>PHOTO_SERVER_PORT</code></td>
+<td>5000</td>
+</tr>
+<tr>
+<td><code>DASHBOARD_POLL_MS</code></td>
+<td>How often to refresh HA state (default 10000ms)</td>
+</tr>
+<tr>
+<td><code>SCREENSAVER_TIMEOUT</code></td>
+<td>Idle time before screensaver (default 60000ms)</td>
+</tr>
+</tbody>
+</table>
+<h3>5.4 Touch Calibration</h3>
+<p>On first boot, the display runs a touch calibration routine — touch each marker with the stylus. Calibration data is saved to the ESP32's non-volatile storage and is not repeated unless the device is erased.</p>
+<p>To force recalibration: in Arduino/PlatformIO, erase the flash (<code>pio run -t erase</code>) then reflash.</p>
+<hr />
+<h2>6. Home Assistant Entities</h2>
+<table>
+<thead>
+<tr>
+<th>Entity ID</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>light.drawing_room_light_1</code></td>
+<td>Drawing room overhead light 1</td>
+</tr>
+<tr>
+<td><code>light.drawing_room_light_2</code></td>
+<td>Drawing room overhead light 2</td>
+</tr>
+<tr>
+<td><code>light.drawing_room_light_3</code></td>
+<td>Drawing room overhead light 3</td>
+</tr>
+<tr>
+<td><code>light.drawing_room_light_4</code></td>
+<td>Drawing room overhead light 4</td>
+</tr>
+<tr>
+<td><code>light.old_lamp</code></td>
+<td>Living room lamp (smart bulb)</td>
+</tr>
+<tr>
+<td><code>switch.living_room_lamp_socket_1</code></td>
+<td>Living room lamp socket</td>
+</tr>
+<tr>
+<td><code>climate.living_room</code></td>
+<td>Living room TRV (Tado)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>7. NAS Photo Server</h2>
+<h3>7.1 Location</h3>
+<ul>
+<li><strong>NAS:</strong> Greenbow DPX2800 at <code>ournas.local</code> / <code>192.168.0.248</code></li>
+<li><strong>Docker management:</strong> Portainer at port 9999</li>
+<li><strong>Source files on NAS:</strong> <code>/volume1/docker/nas-server/</code></li>
+<li><strong>Config folder:</strong> <code>/volume1/docker/tft-config/</code></li>
+<li><strong>Photos root:</strong> <code>/volume1/Photos</code></li>
+</ul>
+<h3>7.2 Docker Setup</h3>
+<p>The server runs as a Docker container managed by Portainer. Project defined in <code>nas-server/docker-compose.yml</code>.</p>
+<p><strong>Volumes mounted into the container:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Host path</th>
+<th>Container path</th>
+<th>Access</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/volume1/Photos</code></td>
+<td><code>/photos</code></td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><code>/volume1/docker/tft-config</code></td>
+<td><code>/config</code></td>
+<td>Read-write (saves config)</td>
+</tr>
+<tr>
+<td><code>/volume1/docker/nas-server/app.py</code></td>
+<td><code>/app/app.py</code></td>
+<td>Read-only (live code updates)</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Mounting <code>app.py</code> as a volume means code updates take effect on container restart — no image rebuild needed.</p>
+</blockquote>
+<h3>7.3 API Endpoints</h3>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>GET</td>
+<td>Web UI for folder selection and settings</td>
+</tr>
+<tr>
+<td><code>/next-photo</code></td>
+<td>GET</td>
+<td>Returns a random photo as 320×240 JPEG</td>
+</tr>
+<tr>
+<td><code>/settings</code></td>
+<td>GET</td>
+<td>Returns <code>{"display_seconds": N}</code></td>
+</tr>
+<tr>
+<td><code>/health</code></td>
+<td>GET</td>
+<td>Returns photo count and status</td>
+</tr>
+<tr>
+<td><code>/save-config</code></td>
+<td>POST</td>
+<td>Saves new config (called by web UI)</td>
+</tr>
+</tbody>
+</table>
+<h3>7.4 Configuration Web UI</h3>
+<p>Open <code>http://192.168.0.248:5000</code> in any browser on the local network to:
+- Tick/untick photo folders to include
+- Set seconds per photo
+- Toggle shuffle and include-subfolders
+- Preview a photo
+- Save and apply immediately</p>
+<hr />
+<h2>8. Dashboard Operation</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Top bar</td>
+<td>"LIVING ROOM" title + WiFi status dot (green = connected)</td>
+</tr>
+<tr>
+<td>Left half</td>
+<td>Drawing room lights — ON / OFF buttons, status dot</td>
+</tr>
+<tr>
+<td>Right half</td>
+<td>Lamps — ON / OFF buttons, status dot</td>
+</tr>
+<tr>
+<td>Bottom strip</td>
+<td>Heating — current temp (large), target temp, − and + buttons</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>Dashboard polls Home Assistant every 10 seconds</li>
+<li>Only changed sections are redrawn (no flicker)</li>
+<li>Temperature changes made in the Tado app take 1–2 minutes to appear (Tado → HA sync delay)</li>
+</ul>
+<hr />
+<h2>9. Screensaver Operation</h2>
+<ul>
+<li>After <strong>60 seconds</strong> with no touch, the display switches to photo slideshow</li>
+<li>Photos are fetched from the NAS server, pre-resized to 320×240</li>
+<li>Display duration per photo is set in the NAS web UI</li>
+<li><strong>Touch anywhere</strong> to return to the dashboard immediately</li>
+</ul>
+<hr />
+<h2>10. Planned — Phase 3: Eufy Doorbell</h2>
+<p>When the doorbell rings:
+- Home Assistant (via Eufy integration) detects the event
+- HA sends a notification to the ESP32 (via MQTT or webhook)
+- The display switches to show a camera snapshot
+- Returns to previous mode after a timeout</p>
+<hr />
+<h2>11. Known Issues / Notes</h2>
+<ul>
+<li><strong>Tado sync lag:</strong> Temperature changes in Tado app take 1–2 minutes to reflect on the display. This is a Tado–HA sync limitation.</li>
+<li><strong>Resistive touch:</strong> Large buttons work well with a finger. For precise input use the supplied stylus.</li>
+<li><strong>Photo server startup:</strong> On NAS reboot, the container scans all selected photo directories before serving. With 18,000+ photos this takes a few seconds.</li>
+</ul></body></html>
