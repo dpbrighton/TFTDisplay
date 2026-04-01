@@ -239,6 +239,7 @@ bool jpegOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 
 void fetchPhotoSettings() {
     HTTPClient http;
+    http.setTimeout(5000);
     char url[128];
     snprintf(url, sizeof(url), "http://%s:%d/settings", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT);
     http.begin(url);
@@ -257,41 +258,39 @@ void showNextPhoto() {
     snprintf(url, sizeof(url), "http://%s:%d%s", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT, PHOTO_ENDPOINT);
     http.begin(url);
     int code = http.GET();
+    Serial.printf("Photo GET code: %d\n", code);
     if (code == 200) {
         int len = http.getSize();
+        Serial.printf("Photo size: %d bytes\n", len);
         WiFiClient* stream = http.getStreamPtr();
         size_t got = 0;
+        unsigned long deadline = millis() + 15000;
 
-        // Allow up to 15s between bytes — handles slow Flask image processing
-        stream->setTimeout(15000);
-
-        if (len > 0 && len <= (int)sizeof(jpegBuf)) {
-            // Known length — readBytes blocks until all len bytes received or timeout
-            got = stream->readBytes((char*)jpegBuf, len);
-        } else {
-            // Chunked / unknown length — read until stream closes
-            uint8_t chunk[512];
-            int n;
-            while (got < sizeof(jpegBuf)) {
-                n = stream->readBytes((char*)chunk, sizeof(chunk));
-                if (n <= 0) break;
-                memcpy(jpegBuf + got, chunk, n);
-                got += n;
+        while (got < sizeof(jpegBuf) && millis() < deadline) {
+            int avail = stream->available();
+            if (avail > 0) {
+                int toRead = min((size_t)avail, sizeof(jpegBuf) - got);
+                got += stream->readBytes((char*)jpegBuf + got, toRead);
+                deadline = millis() + 5000;  // reset deadline while data flows
+            } else {
+                delay(10);
             }
+            if (len > 0 && got >= (size_t)len) break;  // got everything
         }
 
-        if (len > 0 && got == (size_t)len) {
+        Serial.printf("Photo read done: %d of %d bytes\n", got, len);
+
+        if (got > 0 && (len <= 0 || got == (size_t)len)) {
             tft.fillScreen(TFT_BLACK);
             TJpgDec.drawJpg(0, 0, jpegBuf, got);
-        } else if (len <= 0 && got > 0) {
-            tft.fillScreen(TFT_BLACK);
-            TJpgDec.drawJpg(0, 0, jpegBuf, got);
-        } else {
-            Serial.printf("Photo incomplete: got %d of %d bytes\n", got, len);
+            http.end();
+            lastPhotoTime = millis();   // normal: wait photoDisplaySeconds
+            return;
         }
     }
     http.end();
-    lastPhotoTime = millis();
+    // Failed: retry in 3 seconds rather than hammering the server
+    lastPhotoTime = millis() - ((unsigned long)photoDisplaySeconds * 1000UL) + 3000UL;
 }
 
 void enterScreensaver() {

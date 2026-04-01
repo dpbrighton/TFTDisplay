@@ -12,7 +12,7 @@ from io import BytesIO
 from flask import Flask, send_file, jsonify, request, render_template_string
 
 try:
-    from PIL import Image, UnidentifiedImageError
+    from PIL import Image, ImageOps, UnidentifiedImageError
 except ImportError:
     raise SystemExit("Pillow not installed — rebuild the Docker image")
 
@@ -114,6 +114,7 @@ def image_to_jpeg(path):
     with Image.open(path) as img:
         if hasattr(img, "n_frames") and img.n_frames > 1:
             img.seek(0)
+        img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
         img.thumbnail((SCREEN_W, SCREEN_H), Image.LANCZOS)
         canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), (0, 0, 0))

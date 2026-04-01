@@ -1,7 +1,7 @@
 # TFT Living Room Display — Project Documentation
 
-**Version:** 0.7
-**Date:** March 2026
+**Version:** 0.8
+**Date:** April 2026
 **Status:** Phases 1 and 2 complete
 
 ---
@@ -101,6 +101,7 @@ A third phase (Eufy doorbell integration) is planned.
 | v0.5-dashboard-refined | No-flicker refresh, larger heating buttons |
 | v0.6-photo-server-ui | NAS photo server with web UI for folder selection |
 | v0.7-screensaver-working | Phase 2 complete — photo screensaver |
+| v0.8-photo-orientation | EXIF orientation fix, photo streaming improvements, orientation tools |
 
 ---
 
@@ -199,6 +200,36 @@ Open `http://192.168.0.248:5000` in any browser on the local network to:
 - Preview a photo
 - Save and apply immediately
 
+### 7.5 Photo Orientation
+
+The server automatically corrects photos that have EXIF orientation metadata (e.g. photos taken on a modern phone held in portrait). This is handled by `ImageOps.exif_transpose()` in `app.py`.
+
+For older photos and scans with no EXIF orientation data, two one-off utility scripts are provided in `tools/`:
+
+| Script | Purpose |
+|---|---|
+| `audit_photo_orientation.py` | Scans the photo library and reports how many photos have EXIF orientation, which are already correct, and which are suspect (landscape pixels, no EXIF) |
+| `fix_photo_orientation.py` | Uses face detection (OpenCV) to determine the correct orientation of suspect photos and writes an EXIF orientation tag back to the file |
+
+**To run these on a new machine:**
+
+```bash
+python3 -m venv ~/photo-tools-venv
+source ~/photo-tools-venv/bin/activate
+pip install pillow opencv-python piexif
+
+# Audit first
+python3 tools/audit_photo_orientation.py /Volumes/Photos
+
+# Dry run fix (no files changed)
+python3 tools/fix_photo_orientation.py /Volumes/Photos
+
+# Apply fixes
+python3 tools/fix_photo_orientation.py /Volumes/Photos --apply
+```
+
+> The NAS must be mounted at `/Volumes/Photos` via SMB before running these scripts.
+
 ---
 
 ## 8. Dashboard Operation
@@ -240,3 +271,4 @@ When the doorbell rings:
 - **Tado sync lag:** Temperature changes in Tado app take 1–2 minutes to reflect on the display. This is a Tado–HA sync limitation.
 - **Resistive touch:** Large buttons work well with a finger. For precise input use the supplied stylus.
 - **Photo server startup:** On NAS reboot, the container scans all selected photo directories before serving. With 18,000+ photos this takes a few seconds.
+- **Portrait photos (old/scanned):** Photos taken on modern phones are auto-corrected via EXIF orientation. Older scanned photos without EXIF data were corrected using the `tools/fix_photo_orientation.py` script (face detection). ~167 photos were fixed in the initial run; ~1,449 suspect files were left unchanged as they are likely genuine landscape shots.
