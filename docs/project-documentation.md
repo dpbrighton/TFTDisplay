@@ -55,15 +55,15 @@ A third phase (Eufy doorbell integration) is planned.
 ## 3. System Architecture
 
 ```
-┌─────────────────────┐     WiFi / REST API    ┌──────────────────────┐
-│   ESP32 + TFT       │ ◄────────────────────► │  Home Assistant      │
-│   Living Room       │                         │  Raspberry Pi 5      │
-│   Display           │     WiFi / HTTP         │  192.168.0.38:8123   │
-│   192.168.0.103     │ ◄────────────────────► ├──────────────────────┤
-│                     │                         │  NAS Photo Server    │
-└─────────────────────┘                         │  Docker on DPX2800   │
-                                                 │  192.168.0.248:5000  │
-                                                 └──────────────────────┘
++---------------------+     WiFi / REST API    +----------------------+
+|   ESP32 + TFT       | <--------------------> |  Home Assistant      |
+|   Living Room       |                         |  Raspberry Pi 5      |
+|   Display           |     WiFi / HTTP         |  192.168.0.38:8123   |
+|   192.168.0.103     | <--------------------> +----------------------+
+|                     |                         |  NAS Photo Server    |
++---------------------+                         |  Docker on DPX2800   |
+                                                 |  192.168.0.248:5000  |
+                                                 +----------------------+
 ```
 
 ---
@@ -109,7 +109,7 @@ A third phase (Eufy doorbell integration) is planned.
 
 ### 5.1 Build Tool
 
-**PlatformIO** (VS Code extension). Open the `firmware/` folder in VS Code. Use the ✓ button to build and → to upload.
+**PlatformIO** (VS Code extension). Open the `firmware/` folder in VS Code. Use the tick button to build and arrow to upload.
 
 ### 5.2 Libraries
 
