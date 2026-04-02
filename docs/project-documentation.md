@@ -1,19 +1,18 @@
 # TFT Living Room Display — Project Documentation
 
-**Version:** 0.8
+**Version:** 0.9
 **Date:** April 2026
-**Status:** Phases 1 and 2 complete
+**Status:** Phases 1, 2 and 3 complete
 
 ---
 
 ## 1. Project Overview
 
-A wall-mounted smart display for the living room built around an ESP32 microcontroller and a 3.2" TFT touchscreen. The display serves two purposes:
+A wall-mounted smart display for the living room built around an ESP32 microcontroller and a 3.2" TFT touchscreen. The display serves three purposes:
 
 - **Dashboard mode** — shows the current state of living room lights and heating, with touch controls to turn them on and off
 - **Screensaver mode** — after 60 seconds idle, switches to a photo slideshow pulling images from the home NAS
-
-A third phase (Eufy doorbell integration) is planned.
+- **Doorbell mode** — when the Eufy doorbell is pressed, the display immediately shows "Image loading..." then switches to a live snapshot from the front door camera
 
 ---
 
@@ -57,14 +56,35 @@ A third phase (Eufy doorbell integration) is planned.
 ```
 +---------------------+     WiFi / REST API    +----------------------+
 |   ESP32 + TFT       | <--------------------> |  Home Assistant      |
-|   Living Room       |                         |  Raspberry Pi 5      |
-|   Display           |     WiFi / HTTP         |  192.168.0.38:8123   |
+|   Living Room       |                        |  Raspberry Pi 5      |
+|   Display           |     WiFi / HTTP        |  192.168.0.38:8123   |
 |   192.168.0.103     | <--------------------> +----------------------+
-|                     |                         |  NAS Photo Server    |
-+---------------------+                         |  Docker on DPX2800   |
-                                                 |  192.168.0.248:5000  |
-                                                 +----------------------+
+|                     |                        |  NAS Photo Server    |
+|                     |     WiFi / MQTT        |  Docker on DPX2800   |
+|                     | <--------------------> |  192.168.0.248:5000  |
++---------------------+  (doorbell trigger)    +----------------------+
+                                                        ^
+                                                        | WebSocket
+                                                        | ws://192.168.0.38:3000
+                                               +--------+-------------+
+                                               | eufy-security-ws     |
+                                               | on Home Assistant Pi |
+                                               | (Eufy local hub)     |
+                                               +----------------------+
 ```
+
+### Doorbell flow
+
+1. Doorbell button pressed
+2. Eufy hub notifies Home Assistant via local integration
+3. HA automation fires an MQTT message to topic `tft/doorbell`
+4. ESP32 receives MQTT message — immediately shows "Image loading..." on screen
+5. ESP32 sends HTTP GET to `/doorbell-snapshot` on the NAS (blocks waiting)
+6. NAS WebSocket listener (connected to eufy-security-ws on port 3000) receives the picture event
+7. NAS processes the image (crop top half, resize to 320×240) and signals ready
+8. NAS responds to ESP32 with the JPEG — image displayed
+9. After `DOORBELL_TIMEOUT_MS` (60s) or touch, display returns to previous mode
+10. If no image arrives within 60s, NAS returns an error and ESP32 shows "Image not available" for 10s
 
 ---
 
@@ -83,7 +103,7 @@ A third phase (Eufy doorbell integration) is planned.
 | PlatformIO | latest | VS Code extension |
 | Pandoc | 3.9.0 | `brew install pandoc` |
 
-> To replicate this setup on the MacBook Air, install each tool using the same method.
+> Run `scripts/setup-macbook.sh` on a new Mac to install and verify all tools automatically.
 
 ### 4.2 Project Repository
 
@@ -101,7 +121,8 @@ A third phase (Eufy doorbell integration) is planned.
 | v0.5-dashboard-refined | No-flicker refresh, larger heating buttons |
 | v0.6-photo-server-ui | NAS photo server with web UI for folder selection |
 | v0.7-screensaver-working | Phase 2 complete — photo screensaver |
-| v0.8-photo-orientation | EXIF orientation fix, photo streaming improvements, orientation tools |
+| v0.8-photo-orientation | EXIF orientation fix, photo streaming improvements |
+| v0.9-doorbell-working | Phase 3 complete — Eufy doorbell integration |
 
 ---
 
@@ -117,8 +138,8 @@ A third phase (Eufy doorbell integration) is planned.
 |---|---|
 | bodmer/TFT_eSPI | Display and touch driver |
 | bblanchon/ArduinoJson | Parsing Home Assistant JSON responses |
-| knolleary/PubSubClient | MQTT (reserved for Phase 3) |
-| bodmer/TJpg_Decoder | JPEG decoding for photo slideshow |
+| knolleary/PubSubClient | MQTT — receives doorbell ring trigger |
+| bodmer/TJpg_Decoder | JPEG decoding for photo slideshow and doorbell image |
 
 ### 5.3 Configuration
 
@@ -132,18 +153,34 @@ Edit `firmware/include/config.h` before flashing. This file is excluded from Git
 | `HA_TOKEN` | Long-lived access token from HA profile |
 | `PHOTO_SERVER_HOST` | NAS IP (192.168.0.248) |
 | `PHOTO_SERVER_PORT` | 5000 |
+| `MQTT_HOST` | MQTT broker IP (same as HA host) |
+| `MQTT_PORT` | 1883 |
+| `MQTT_USER` / `MQTT_PASS` | MQTT broker credentials |
+| `MQTT_CLIENT_ID` | `tft-display` |
+| `MQTT_TOPIC_DOORBELL` | `tft/doorbell` |
 | `DASHBOARD_POLL_MS` | How often to refresh HA state (default 10000ms) |
 | `SCREENSAVER_TIMEOUT` | Idle time before screensaver (default 60000ms) |
+| `DOORBELL_TIMEOUT_MS` | How long to show doorbell image (default 60000ms) |
 
-### 5.4 Touch Calibration
+### 5.4 Key Implementation Notes
+
+- **WiFi modem sleep disabled** — `WiFi.setSleep(false)` is called before `WiFi.begin()`. Without this, the ESP32 enters modem sleep between packets, causing partial TCP reads at multiples of 1436 bytes (TCP MSS). This was the root cause of photo slideshow stalls.
+- **HTTP connection reuse disabled** — `http.setReuse(false)` + `Connection: close` header prevents stale keep-alive connections returning 0 bytes on reuse.
+- **Manual read loop** — photo and doorbell image reads use a manual while-loop with a hard deadline rather than `readBytes()`, allowing `mqttClient.loop()` to be called during the read so MQTT stays alive.
+- **Doorbell priority** — the `doorbellTriggered` flag is checked inside the photo read loop so a ring always interrupts a photo download immediately.
+- **Doorbell timer reset** — `doorbellTime` is reset to `millis()` when the image is successfully displayed, so the user gets the full `DOORBELL_TIMEOUT_MS` view time from when the image appears, not from when the bell rang.
+
+### 5.5 Touch Calibration
 
 On first boot, the display runs a touch calibration routine — touch each marker with the stylus. Calibration data is saved to the ESP32's non-volatile storage and is not repeated unless the device is erased.
 
-To force recalibration: in Arduino/PlatformIO, erase the flash (`pio run -t erase`) then reflash.
+To force recalibration: in PlatformIO, erase the flash (`pio run -t erase`) then reflash.
 
 ---
 
-## 6. Home Assistant Entities
+## 6. Home Assistant Setup
+
+### 6.1 Entities Used
 
 | Entity ID | Description |
 |---|---|
@@ -154,6 +191,22 @@ To force recalibration: in Arduino/PlatformIO, erase the flash (`pio run -t eras
 | `light.old_lamp` | Living room lamp (smart bulb) |
 | `switch.living_room_lamp_socket_1` | Living room lamp socket |
 | `climate.living_room` | Living room TRV (Tado) |
+| `binary_sensor.front_door_bell_ringing` | Eufy doorbell ring sensor |
+
+### 6.2 Doorbell Automation
+
+Trigger: `binary_sensor.front_door_bell_ringing` state → `on`
+
+Action: publish MQTT message
+- Topic: `tft/doorbell`
+- Payload: `ring`
+- QoS: 1
+
+This is the only HA involvement in the doorbell flow. Image retrieval is handled entirely between the NAS and eufy-security-ws — HA is not used for image delivery.
+
+### 6.3 MQTT Broker
+
+Mosquitto add-on running on the HA Raspberry Pi (192.168.0.38:1883). User `mqtt-user` with appropriate password set in the Mosquitto config.
 
 ---
 
@@ -161,15 +214,15 @@ To force recalibration: in Arduino/PlatformIO, erase the flash (`pio run -t eras
 
 ### 7.1 Location
 
-- **NAS:** Greenbow DPX2800 at `ournas.local` / `192.168.0.248`
-- **Docker management:** Portainer at port 9999
+- **NAS:** UGREEN DXP2800 at `192.168.0.248`
+- **Docker management:** UGREEN Docker (built-in) — SSH to NAS for rebuilds
 - **Source files on NAS:** `/volume1/docker/nas-server/`
 - **Config folder:** `/volume1/docker/tft-config/`
 - **Photos root:** `/volume1/Photos`
 
 ### 7.2 Docker Setup
 
-The server runs as a Docker container managed by Portainer. Project defined in `nas-server/docker-compose.yml`.
+The server runs as a Docker container. Project defined in `/volume1/docker/nas-server/docker-compose.yml`.
 
 **Volumes mounted into the container:**
 
@@ -177,30 +230,62 @@ The server runs as a Docker container managed by Portainer. Project defined in `
 |---|---|---|
 | `/volume1/Photos` | `/photos` | Read-only |
 | `/volume1/docker/tft-config` | `/config` | Read-write (saves config) |
-| `/volume1/docker/nas-server/app.py` | `/app/app.py` | Read-only (live code updates) |
 
-> Mounting `app.py` as a volume means code updates take effect on container restart — no image rebuild needed.
+> **Note:** `app.py` and `requirements.txt` are baked into the Docker image at build time. To deploy code changes, upload the file via UGREEN file manager then rebuild:
+> ```bash
+> ssh Davidadmin@192.168.0.248
+> cd /volume1/docker/nas-server
+> docker compose build --no-cache && docker compose up -d
+> ```
 
-### 7.3 API Endpoints
+### 7.3 Python Dependencies
+
+`requirements.txt`:
+```
+flask==3.1.0
+pillow==11.2.1
+websocket-client==1.8.0
+```
+
+`websocket-client` is required for the eufy-security-ws WebSocket listener. If it is missing from the image, the container logs will show `websocket-client not available — eufy WebSocket listener disabled` and doorbell images will fall back to HA fetch only.
+
+### 7.4 eufy-security-ws WebSocket Listener
+
+On startup, the NAS server connects to `ws://192.168.0.38:3000` (the eufy-security-ws add-on running on the HA Pi) and sends a `start_listening` command. It then listens for `property changed` events with `name == "picture"` from the T8214 doorbell device.
+
+When a picture event arrives:
+1. Image bytes extracted from the Node.js Buffer payload
+2. Image cropped to top half (T8214 is a composite 640×880 image — top half is the main front camera)
+3. Resized to 320×240 and saved as JPEG
+4. Cached in memory and a threading Event flag set
+
+The `/doorbell-snapshot` endpoint blocks waiting for this flag (up to 60s), then serves the cached image and clears the cache. The next ring starts with a clean slate.
+
+Connection drops are handled automatically — the listener thread reconnects every 15 seconds on failure.
+
+### 7.5 API Endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Web UI for folder selection and settings |
 | `/next-photo` | GET | Returns a random photo as 320×240 JPEG |
+| `/doorbell-snapshot` | GET | Blocks until fresh doorbell image ready (max 60s), returns JPEG |
+| `/eufy-ws-status` | GET | Diagnostic: WebSocket connection state and cache info |
 | `/settings` | GET | Returns `{"display_seconds": N}` |
 | `/health` | GET | Returns photo count and status |
 | `/save-config` | POST | Saves new config (called by web UI) |
+| `/test-doorbell` | GET | Diagnostic: tests HA image_proxy connection |
 
-### 7.4 Configuration Web UI
+### 7.6 Configuration Web UI
 
 Open `http://192.168.0.248:5000` in any browser on the local network to:
 - Tick/untick photo folders to include
 - Set seconds per photo
 - Toggle shuffle and include-subfolders
-- Preview a photo
-- Save and apply immediately
+- Set HA host, port and token (needed for doorbell fallback)
+- Preview a photo or doorbell snapshot
 
-### 7.5 Photo Orientation
+### 7.7 Photo Orientation
 
 The server automatically corrects photos that have EXIF orientation metadata (e.g. photos taken on a modern phone held in portrait). This is handled by `ImageOps.exif_transpose()` in `app.py`.
 
@@ -208,8 +293,8 @@ For older photos and scans with no EXIF orientation data, two one-off utility sc
 
 | Script | Purpose |
 |---|---|
-| `audit_photo_orientation.py` | Scans the photo library and reports how many photos have EXIF orientation, which are already correct, and which are suspect (landscape pixels, no EXIF) |
-| `fix_photo_orientation.py` | Uses face detection (OpenCV) to determine the correct orientation of suspect photos and writes an EXIF orientation tag back to the file |
+| `audit_photo_orientation.py` | Scans the photo library and reports EXIF orientation status |
+| `fix_photo_orientation.py` | Uses face detection (OpenCV) to fix orientation of suspect photos |
 
 **To run these on a new machine:**
 
@@ -256,19 +341,24 @@ python3 tools/fix_photo_orientation.py /Volumes/Photos --apply
 
 ---
 
-## 10. Planned — Phase 3: Eufy Doorbell
+## 10. Doorbell Operation
 
-When the doorbell rings:
-- Home Assistant (via Eufy integration) detects the event
-- HA sends a notification to the ESP32 (via MQTT or webhook)
-- The display switches to show a camera snapshot
-- Returns to previous mode after a timeout
+- When the doorbell rings, the ESP32 receives an MQTT message instantly
+- Display switches to a black screen with a red "FRONT DOOR" header and "Image loading..." text
+- The NAS blocks waiting for the eufy-security-ws picture event (up to 60 seconds)
+- When the image arrives it is sent to the ESP32 and displayed full-screen with the header overlay
+- The display auto-dismisses after 60 seconds, or can be dismissed by touching the screen
+- If no image arrives within 60 seconds, "Image not available" is shown for 10 seconds, then the display returns to its previous mode (dashboard or screensaver)
+
+**Note on image timing:** The eufy local integration processes the doorbell video clip and generates a snapshot asynchronously. This typically takes 30–60 seconds after the bell is pressed. This is a limitation of the eufy system and cannot be reduced without cloud access.
 
 ---
 
 ## 11. Known Issues / Notes
 
+- **Eufy image latency:** Doorbell snapshots take 30–60 seconds to arrive from eufy-security-ws. The display shows "Image loading..." during this time. This is inherent to how eufy processes video locally.
 - **Tado sync lag:** Temperature changes in Tado app take 1–2 minutes to reflect on the display. This is a Tado–HA sync limitation.
 - **Resistive touch:** Large buttons work well with a finger. For precise input use the supplied stylus.
 - **Photo server startup:** On NAS reboot, the container scans all selected photo directories before serving. With 18,000+ photos this takes a few seconds.
-- **Portrait photos (old/scanned):** Photos taken on modern phones are auto-corrected via EXIF orientation. Older scanned photos without EXIF data were corrected using the `tools/fix_photo_orientation.py` script (face detection). ~167 photos were fixed in the initial run; ~1,449 suspect files were left unchanged as they are likely genuine landscape shots.
+- **Portrait photos (old/scanned):** Photos taken on modern phones are auto-corrected via EXIF orientation. Older scanned photos without EXIF data were corrected using the `tools/fix_photo_orientation.py` script. ~167 photos were fixed in the initial run.
+- **NAS Docker rebuilds:** Because `app.py` is baked into the image, any code change requires an SSH rebuild (not just a container restart via the UGREEN UI).

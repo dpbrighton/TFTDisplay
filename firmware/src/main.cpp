@@ -5,11 +5,16 @@
 #include <TFT_eSPI.h>
 #include <Preferences.h>
 #include <TJpg_Decoder.h>
+#include <PubSubClient.h>
 #include "config.h"
 
 // ── Hardware ────────────────────────────────────────────────
 TFT_eSPI    tft   = TFT_eSPI();
 Preferences prefs;
+
+// ── MQTT ─────────────────────────────────────────────────────
+WiFiClient   wifiClientMqtt;
+PubSubClient mqttClient(wifiClientMqtt);
 
 // ── Screen dimensions (landscape) ──────────────────────────
 #define SCREEN_W  320
@@ -55,6 +60,12 @@ unsigned long lastTouchTime = 0;
 unsigned long lastPhotoTime = 0;
 bool          screensaverActive  = false;
 int           photoDisplaySeconds = 10;
+
+// ── Doorbell state ───────────────────────────────────────────
+volatile bool doorbellTriggered      = false;
+bool          doorbellActive         = false;
+bool          doorbellWasScreensaver = false;
+unsigned long doorbellTime           = 0;
 
 // JPEG receive buffer — 55KB handles a 320×240 JPEG at quality 85
 static uint8_t jpegBuf[55000];
@@ -226,8 +237,11 @@ void drawHeatingSection() {
     drawBtn(HTG_PLUS_X, y + HTG_BTN_Y_OFF, HTG_BTN_W, HTG_BTN_H, "+", true, C_DIVIDER);
 }
 
-// Forward declaration
+// Forward declarations
 void drawAll();
+void enterDoorbell();
+void exitDoorbell();
+void checkWifi();
 
 // ── Screensaver / Photo slideshow ───────────────────────────
 
@@ -251,46 +265,69 @@ void fetchPhotoSettings() {
     http.end();
 }
 
-void showNextPhoto() {
+bool fetchPhoto() {
     HTTPClient http;
-    http.setTimeout(10000);
+    http.setTimeout(8000);
+    http.setReuse(false);
     char url[128];
     snprintf(url, sizeof(url), "http://%s:%d%s", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT, PHOTO_ENDPOINT);
     http.begin(url);
+    http.addHeader("Connection", "close");
     int code = http.GET();
-    Serial.printf("Photo GET code: %d\n", code);
+    Serial.printf("Photo GET: %d  RSSI: %d dBm  Heap: %d\n", code, WiFi.RSSI(), ESP.getFreeHeap());
     if (code == 200) {
         int len = http.getSize();
         Serial.printf("Photo size: %d bytes\n", len);
-        WiFiClient* stream = http.getStreamPtr();
-        size_t got = 0;
-        unsigned long deadline = millis() + 15000;
-
-        while (got < sizeof(jpegBuf) && millis() < deadline) {
-            int avail = stream->available();
-            if (avail > 0) {
-                int toRead = min((size_t)avail, sizeof(jpegBuf) - got);
-                got += stream->readBytes((char*)jpegBuf + got, toRead);
-                deadline = millis() + 5000;  // reset deadline while data flows
-            } else {
-                delay(10);
+        if (len > 0 && (size_t)len <= sizeof(jpegBuf)) {
+            WiFiClient* stream = http.getStreamPtr();
+            size_t got = 0;
+            unsigned long deadline = millis() + 8000;
+            while (got < (size_t)len && millis() < deadline) {
+                if (doorbellTriggered) {
+                    Serial.println("Doorbell priority — aborting photo read");
+                    break;
+                }
+                if (WiFi.status() != WL_CONNECTED) {
+                    Serial.println("WiFi dropped during photo read");
+                    break;
+                }
+                int avail = stream->available();
+                if (avail > 0) {
+                    got += stream->read((uint8_t*)jpegBuf + got,
+                                        min((size_t)avail, (size_t)len - got));
+                } else {
+                    mqttClient.loop();
+                    delay(1);
+                }
             }
-            if (len > 0 && got >= (size_t)len) break;  // got everything
-        }
-
-        Serial.printf("Photo read done: %d of %d bytes\n", got, len);
-
-        if (got > 0 && (len <= 0 || got == (size_t)len)) {
-            tft.fillScreen(TFT_BLACK);
-            TJpgDec.drawJpg(0, 0, jpegBuf, got);
             http.end();
-            lastPhotoTime = millis();   // normal: wait photoDisplaySeconds
-            return;
+            Serial.printf("Photo read done: %d of %d bytes\n", got, len);
+            if (got == (size_t)len) {
+                tft.fillScreen(TFT_BLACK);
+                TJpgDec.drawJpg(0, 0, jpegBuf, got);
+                return true;
+            }
+            Serial.println("Photo incomplete — retrying");
         }
+    } else {
+        http.end();
     }
-    http.end();
-    // Failed: retry in 3 seconds rather than hammering the server
-    lastPhotoTime = millis() - ((unsigned long)photoDisplaySeconds * 1000UL) + 3000UL;
+    return false;
+}
+
+void showNextPhoto() {
+    if (fetchPhoto()) {
+        lastPhotoTime = millis();
+        return;
+    }
+    // First attempt failed — wait 2s then retry with a fresh connection
+    delay(2000);
+    if (fetchPhoto()) {
+        lastPhotoTime = millis();
+        return;
+    }
+    // Both failed — back off before trying again
+    lastPhotoTime = millis() - ((unsigned long)photoDisplaySeconds * 1000UL) + 5000UL;
 }
 
 void enterScreensaver() {
@@ -365,6 +402,12 @@ void handleTouch() {
     if (!tft.getTouch(&tx, &ty)) return;
     delay(80); // simple debounce
 
+    // Any touch exits doorbell mode
+    if (doorbellActive) {
+        exitDoorbell();
+        return;
+    }
+
     // Any touch exits screensaver
     if (screensaverActive) {
         exitScreensaver();
@@ -427,6 +470,129 @@ void handleTouch() {
     }
 }
 
+// ── MQTT ─────────────────────────────────────────────────────
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    if (strcmp(topic, MQTT_TOPIC_DOORBELL) == 0) {
+        doorbellTriggered = true;
+        Serial.println("Doorbell MQTT received");
+    }
+}
+
+void mqttConnect() {
+    mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+    mqttClient.setCallback(mqttCallback);
+    mqttClient.setKeepAlive(60);
+    if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS)) {
+        mqttClient.subscribe(MQTT_TOPIC_DOORBELL, 1);  // QoS 1 — broker retries if missed
+        Serial.println("MQTT connected");
+    } else {
+        Serial.printf("MQTT connect failed, rc=%d\n", mqttClient.state());
+    }
+}
+
+// ── Doorbell display ─────────────────────────────────────────
+void showDoorbellImage() {
+    // Show loading screen immediately — NAS is waiting for eufy picture
+    tft.fillScreen(TFT_BLACK);
+    tft.fillRect(0, 0, SCREEN_W, 40, 0xC000);
+    tft.setTextColor(TFT_WHITE, 0xC000);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextSize(2);
+    tft.drawString("FRONT DOOR", 8, 20);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(1);
+    tft.setTextColor(C_SUBTEXT, TFT_BLACK);
+    tft.drawString("Image loading...", SCREEN_W / 2, SCREEN_H / 2);
+
+    char url[128];
+    snprintf(url, sizeof(url), "http://%s:%d/doorbell-snapshot",
+             PHOTO_SERVER_HOST, PHOTO_SERVER_PORT);
+
+    // Single request — NAS blocks until picture ready (up to 60s) then sends it
+    HTTPClient http;
+    http.setTimeout(65000);   // 5s headroom over NAS 60s timeout
+    http.setReuse(false);
+    http.begin(url);
+    http.addHeader("Connection", "close");
+    int code = http.GET();
+    Serial.printf("Doorbell GET: %d\n", code);
+
+    bool imageShown = false;
+    if (code == 200) {
+        int len = http.getSize();
+        Serial.printf("Doorbell image: %d bytes\n", len);
+        if (len > 0 && (size_t)len <= sizeof(jpegBuf)) {
+            WiFiClient* stream = http.getStreamPtr();
+            size_t got = 0;
+            unsigned long deadline = millis() + 10000;
+            while (got < (size_t)len && millis() < deadline) {
+                if (WiFi.status() != WL_CONNECTED) break;
+                int avail = stream->available();
+                if (avail > 0) {
+                    got += stream->read((uint8_t*)jpegBuf + got,
+                                        min((size_t)avail, (size_t)len - got));
+                } else {
+                    mqttClient.loop();
+                    delay(1);
+                }
+            }
+            Serial.printf("Doorbell read: %d of %d bytes\n", got, len);
+            if (got == (size_t)len) {
+                tft.fillScreen(TFT_BLACK);
+                TJpgDec.drawJpg(0, 0, jpegBuf, got);
+                imageShown = true;
+            }
+        }
+    }
+    http.end();
+
+    if (imageShown) {
+        // Header overlay on top of image
+        tft.fillRect(0, 0, SCREEN_W, 40, 0xC000);
+        tft.setTextColor(TFT_WHITE, 0xC000);
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextSize(2);
+        tft.drawString("FRONT DOOR", 8, 14);
+        tft.setTextDatum(MR_DATUM);
+        tft.setTextSize(1);
+        tft.drawString("Touch to dismiss", SCREEN_W - 6, 30);
+        doorbellTime = millis();   // reset so user gets full view time from now
+    } else {
+        // Show unavailable banner — auto-dismiss after 10s via loop timeout
+        Serial.println("Doorbell: image not available");
+        tft.fillRect(0, 41, SCREEN_W, SCREEN_H - 41, TFT_BLACK);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextSize(1);
+        tft.setTextColor(C_SUBTEXT, TFT_BLACK);
+        tft.drawString("Image not available", SCREEN_W / 2, SCREEN_H / 2);
+        // Expire the doorbell display in 10s
+        doorbellTime = millis() - DOORBELL_TIMEOUT_MS + 10000UL;
+    }
+}
+
+void enterDoorbell() {
+    doorbellWasScreensaver = screensaverActive;
+    screensaverActive      = false;
+    doorbellActive         = true;
+    doorbellTime           = millis();
+    showDoorbellImage();
+}
+
+void exitDoorbell() {
+    doorbellActive = false;
+    if (doorbellWasScreensaver) {
+        screensaverActive = true;
+        tft.fillScreen(TFT_BLACK);
+        checkWifi();
+        showNextPhoto();
+    } else {
+        lastTouchTime = millis();
+        tft.fillScreen(C_BG);
+        pollHA();
+        drawAll();
+    }
+}
+
 // ── WiFi reconnect ──────────────────────────────────────────
 void checkWifi() {
     if (WiFi.status() != WL_CONNECTED) {
@@ -452,6 +618,7 @@ void setup() {
     tft.setTextSize(1);
     tft.drawString("Connecting to WiFi...", SCREEN_W / 2, SCREEN_H / 2 + 10);
 
+    WiFi.setSleep(false);   // disable modem sleep — prevents packet loss during photo transfers
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
@@ -461,6 +628,8 @@ void setup() {
     dash.wifiOk = true;
 
     touchSetup();
+
+    mqttConnect();
 
     // Set up JPEG decoder
     TJpgDec.setJpgScale(1);
@@ -479,23 +648,40 @@ void setup() {
 
 // ── Loop ────────────────────────────────────────────────────
 void loop() {
+    // Keep MQTT alive
+    if (!mqttClient.connected()) mqttConnect();
+    mqttClient.loop();
+
+    // Doorbell triggered by MQTT — enter doorbell mode immediately
+    if (doorbellTriggered) {
+        doorbellTriggered = false;
+        enterDoorbell();
+        return;
+    }
+
+    // In doorbell mode: handle touch and auto-dismiss after timeout
+    if (doorbellActive) {
+        handleTouch();
+        if (millis() - doorbellTime > DOORBELL_TIMEOUT_MS) {
+            exitDoorbell();
+        }
+        return;
+    }
+
     handleTouch();
 
     if (screensaverActive) {
-        // Advance to next photo when display time expires
         if (millis() - lastPhotoTime > (unsigned long)photoDisplaySeconds * 1000UL) {
             showNextPhoto();
         }
         return;
     }
 
-    // Activate screensaver after idle timeout
     if (millis() - lastTouchTime > SCREENSAVER_TIMEOUT) {
         enterScreensaver();
         return;
     }
 
-    // Periodic HA state refresh
     if (millis() - lastPoll > DASHBOARD_POLL_MS) {
         lastPoll = millis();
         checkWifi();

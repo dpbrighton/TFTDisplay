@@ -26,7 +26,18 @@
 #define PHOTO_ENDPOINT    "/next-photo"
 
 // ============================================================
+// MQTT broker (Phase 3 — Eufy doorbell)
+// ============================================================
+#define MQTT_HOST      "homeassistant.local"   // usually same host as HA
+#define MQTT_PORT      1883
+#define MQTT_USER      "YOUR_MQTT_USERNAME"
+#define MQTT_PASS      "YOUR_MQTT_PASSWORD"
+#define MQTT_CLIENT_ID "tft-display"
+#define MQTT_TOPIC_DOORBELL "tft/doorbell"
+
+// ============================================================
 // Display timing
 // ============================================================
-#define DASHBOARD_POLL_MS   10000   // How often to refresh HA state (ms)
-#define SCREENSAVER_TIMEOUT 60000   // Idle time before screensaver starts (ms)
+#define DASHBOARD_POLL_MS    10000  // How often to refresh HA state (ms)
+#define SCREENSAVER_TIMEOUT  60000  // Idle time before screensaver starts (ms)
+#define DOORBELL_TIMEOUT_MS  60000  // How long to show doorbell image (ms)
