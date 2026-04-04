@@ -263,6 +263,8 @@ The `/doorbell-snapshot` endpoint blocks waiting for this flag (up to 60s), then
 
 Connection drops are handled automatically — the listener thread reconnects every 15 seconds on failure.
 
+**eufy-security-ws add-on configuration (HA Pi):** The station must be added via the add-on UI with `serial_number: T8030T23244602B4` and `ip_address: 192.168.0.129` (DHCP reservation set in router). This forces local P2P rather than cloud relay. Without this, the P2P client has no LAN IP and falls back to AWS relay servers, adding further latency. The `event_duration` config option controls how long binary sensors (e.g. `ringing`) stay triggered after an event — it does not affect snapshot timing.
+
 ### 7.5 API Endpoints
 
 | Endpoint | Method | Description |
@@ -350,13 +352,13 @@ python3 tools/fix_photo_orientation.py /Volumes/Photos --apply
 - The display auto-dismisses after 60 seconds, or can be dismissed by touching the screen
 - If no image arrives within 60 seconds, "Image not available" is shown for 10 seconds, then the display returns to its previous mode (dashboard or screensaver)
 
-**Note on image timing:** The eufy local integration processes the doorbell video clip and generates a snapshot asynchronously. This typically takes 30–60 seconds after the bell is pressed. This is a limitation of the eufy system and cannot be reduced without cloud access.
+**Note on image timing:** The snapshot typically arrives approximately 60 seconds after the bell is pressed. This is a limitation of the eufy-security-ws library (v2.1.0), which uses a hardcoded 60-second delay after receiving the ring event before querying the hub database for the snapshot — presumably to allow the hub time to write the file to disk. The P2P connection between the HA Pi and the Eufy hub is local (192.168.0.129), confirmed via debug logging. Reducing this delay would require patching the eufy-security-client library.
 
 ---
 
 ## 11. Known Issues / Notes
 
-- **Eufy image latency:** Doorbell snapshots take 30–60 seconds to arrive from eufy-security-ws. The display shows "Image loading..." during this time. This is inherent to how eufy processes video locally.
+- **Eufy image latency:** Doorbell snapshots take approximately 60 seconds to arrive. This is a hardcoded delay in the eufy-security-client library (v2.1.0) — after receiving the ring event it waits ~60 seconds before querying the hub database for the snapshot. The P2P connection is local (192.168.0.129 — confirmed). The display shows "Image loading..." during this time. Reducing the delay would require patching the library.
 - **Tado sync lag:** Temperature changes in Tado app take 1–2 minutes to reflect on the display. This is a Tado–HA sync limitation.
 - **Resistive touch:** Large buttons work well with a finger. For precise input use the supplied stylus.
 - **Photo server startup:** On NAS reboot, the container scans all selected photo directories before serving. With 18,000+ photos this takes a few seconds.
