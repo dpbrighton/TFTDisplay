@@ -1,33 +1,29 @@
-<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>TFT Display — Project Documentation</title>
-<style>
-  body { font-family: -apple-system, Helvetica, sans-serif; font-size: 13px; line-height: 1.6; max-width: 820px; margin: 40px auto; color: #222; }
-  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 6px; }
-  h2 { font-size: 17px; margin-top: 28px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-  h3 { font-size: 14px; margin-top: 16px; }
-  table { border-collapse: collapse; width: 100%%; margin: 12px 0; font-size: 12px; }
-  th { background: #333; color: white; padding: 6px 10px; text-align: left; }
-  td { border: 1px solid #ccc; padding: 5px 10px; }
-  tr:nth-child(even) td { background: #f5f5f5; }
-  code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px; }
-  pre { background: #f0f0f0; padding: 12px; border-radius: 4px; font-size: 11px; }
-  blockquote { border-left: 3px solid #aaa; margin: 8px 0; padding-left: 12px; color: #555; }
-  hr { border: none; border-top: 1px solid #ddd; margin: 20px 0; }
-</style></head><body><h1>TFT Living Room Display — Project Documentation</h1>
-<p><strong>Version:</strong> 0.7
-<strong>Date:</strong> March 2026
-<strong>Status:</strong> Phases 1 and 2 complete</p>
+<h1 id="tft-living-room-display-project-documentation">TFT Living Room
+Display — Project Documentation</h1>
+<p><strong>Version:</strong> 0.10 <strong>Date:</strong> April 2026
+<strong>Status:</strong> Phases 1, 2 and 3 complete</p>
 <hr />
-<h2>1. Project Overview</h2>
-<p>A wall-mounted smart display for the living room built around an ESP32 microcontroller and a 3.2" TFT touchscreen. The display serves two purposes:</p>
+<h2 id="project-overview">1. Project Overview</h2>
+<p>A wall-mounted smart display for the living room built around an
+ESP32 microcontroller and a 3.2” TFT touchscreen. The display serves
+three purposes:</p>
 <ul>
-<li><strong>Dashboard mode</strong> — shows the current state of living room lights and heating, with touch controls to turn them on and off</li>
-<li><strong>Screensaver mode</strong> — after 60 seconds idle, switches to a photo slideshow pulling images from the home NAS</li>
+<li><strong>Dashboard mode</strong> — shows the current state of living
+room lights and heating, with touch controls to turn them on and
+off</li>
+<li><strong>Screensaver mode</strong> — after 60 seconds idle, switches
+to a photo slideshow pulling images from the home NAS</li>
+<li><strong>Doorbell mode</strong> — when the Eufy doorbell is pressed,
+the display immediately shows “Image loading…” then switches to a live
+snapshot from the front door camera</li>
 </ul>
-<p>A third phase (Eufy doorbell integration) is planned.</p>
 <hr />
-<h2>2. Hardware</h2>
+<h2 id="hardware">2. Hardware</h2>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Component</th>
@@ -41,7 +37,7 @@
 </tr>
 <tr>
 <td>Display</td>
-<td>3.2" SPI TFT, ILI9341 driver, 240×320 resolution</td>
+<td>3.2” SPI TFT, ILI9341 driver, 240×320 resolution</td>
 </tr>
 <tr>
 <td>Screen SKU</td>
@@ -49,7 +45,8 @@
 </tr>
 <tr>
 <td>Touch</td>
-<td>Resistive (XPT2046 controller) — stylus included; large buttons work with finger</td>
+<td>Resistive (XPT2046 controller) — stylus included; large buttons work
+with finger</td>
 </tr>
 <tr>
 <td>Connection</td>
@@ -57,7 +54,7 @@
 </tr>
 </tbody>
 </table>
-<h3>2.1 Wiring</h3>
+<h3 id="wiring">2.1 Wiring</h3>
 <table>
 <thead>
 <tr>
@@ -140,24 +137,59 @@
 </tbody>
 </table>
 <blockquote>
-<p><strong>Important:</strong> GPIO 2 on the ESP32 WROOM-32 is connected to the onboard LED and causes display initialisation to fail if used as the DC pin. Always use GPIO 16 for DC.</p>
-<p><strong>Shared SPI pins:</strong> SCK/T_CLK, MOSI/T_DIN, and MISO/T_DO all share the same ESP32 pins. Connect both screen wires to the same ESP32 pin (twist wire ends together into one Dupont socket).</p>
+<p><strong>Important:</strong> GPIO 2 on the ESP32 WROOM-32 is connected
+to the onboard LED and causes display initialisation to fail if used as
+the DC pin. Always use GPIO 16 for DC.</p>
+</blockquote>
+<blockquote>
+<p><strong>Shared SPI pins:</strong> SCK/T_CLK, MOSI/T_DIN, and
+MISO/T_DO all share the same ESP32 pins. Connect both screen wires to
+the same ESP32 pin (twist wire ends together into one Dupont
+socket).</p>
 </blockquote>
 <hr />
-<h2>3. System Architecture</h2>
-<pre><code>┌─────────────────────┐     WiFi / REST API    ┌──────────────────────┐
-│   ESP32 + TFT       │ ◄────────────────────► │  Home Assistant      │
-│   Living Room       │                         │  Raspberry Pi 5      │
-│   Display           │     WiFi / HTTP         │  192.168.0.38:8123   │
-│   192.168.0.103     │ ◄────────────────────► ├──────────────────────┤
-│                     │                         │  NAS Photo Server    │
-└─────────────────────┘                         │  Docker on DPX2800   │
-                                                 │  192.168.0.248:5000  │
-                                                 └──────────────────────┘
-</code></pre>
+<h2 id="system-architecture">3. System Architecture</h2>
+<pre><code>+---------------------+     WiFi / REST API    +----------------------+
+|   ESP32 + TFT       | &lt;--------------------&gt; |  Home Assistant      |
+|   Living Room       |                        |  Raspberry Pi 5      |
+|   Display           |     WiFi / HTTP        |  192.168.0.38:8123   |
+|   192.168.0.103     | &lt;--------------------&gt; +----------------------+
+|                     |                        |  NAS Photo Server    |
+|                     |     WiFi / MQTT        |  Docker on DPX2800   |
+|                     | &lt;--------------------&gt; |  192.168.0.248:5000  |
++---------------------+  (doorbell trigger)    +----------------------+
+                                                        ^
+                                                        | WebSocket
+                                                        | ws://192.168.0.38:3000
+                                               +--------+-------------+
+                                               | eufy-security-ws     |
+                                               | on Home Assistant Pi |
+                                               | (Eufy local hub)     |
+                                               +----------------------+</code></pre>
+<h3 id="doorbell-flow">Doorbell flow</h3>
+<ol type="1">
+<li>Doorbell button pressed</li>
+<li>Eufy hub notifies Home Assistant via local integration</li>
+<li>HA automation fires an MQTT message to topic
+<code>tft/doorbell</code></li>
+<li>ESP32 receives MQTT message — immediately shows “Image loading…” on
+screen</li>
+<li>ESP32 sends HTTP GET to <code>/doorbell-snapshot</code> on the NAS
+(blocks waiting)</li>
+<li>NAS WebSocket listener (connected to eufy-security-ws on port 3000)
+receives the picture event</li>
+<li>NAS processes the image (crop top half, resize to 320×240) and
+signals ready</li>
+<li>NAS responds to ESP32 with the JPEG — image displayed</li>
+<li>After <code>DOORBELL_TIMEOUT_MS</code> (60s) or touch, display
+returns to previous mode</li>
+<li>If no image arrives within 60s, NAS returns an error and ESP32 shows
+“Image not available” for 10s</li>
+</ol>
 <hr />
-<h2>4. Software — Development Environment</h2>
-<h3>4.1 Mac Toolchain</h3>
+<h2 id="software-development-environment">4. Software — Development
+Environment</h2>
+<h3 id="mac-toolchain">4.1 Mac Toolchain</h3>
 <table>
 <thead>
 <tr>
@@ -210,15 +242,22 @@
 </tbody>
 </table>
 <blockquote>
-<p>To replicate this setup on the MacBook Air, install each tool using the same method.</p>
+<p>Run <code>scripts/setup-macbook.sh</code> on a new Mac to install and
+verify all tools automatically.</p>
 </blockquote>
-<h3>4.2 Project Repository</h3>
+<h3 id="project-repository">4.2 Project Repository</h3>
 <ul>
-<li><strong>GitHub:</strong> https://github.com/dpbrighton/TFTDisplay</li>
-<li><strong>Local path (Mac mini):</strong> <code>~/Documents/Claud/TFTDisplay</code></li>
+<li><strong>GitHub:</strong>
+https://github.com/dpbrighton/TFTDisplay</li>
+<li><strong>Local path (Mac mini):</strong>
+<code>~/Documents/Claud/TFTDisplay</code></li>
 </ul>
-<h3>4.3 Version Snapshots</h3>
+<h3 id="version-snapshots">4.3 Version Snapshots</h3>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Tag</th>
@@ -254,14 +293,33 @@
 <td>v0.7-screensaver-working</td>
 <td>Phase 2 complete — photo screensaver</td>
 </tr>
+<tr>
+<td>v0.8-photo-orientation</td>
+<td>EXIF orientation fix, photo streaming improvements</td>
+</tr>
+<tr>
+<td>v0.9-doorbell-working</td>
+<td>Phase 3 complete — Eufy doorbell integration</td>
+</tr>
+<tr>
+<td>v0.10-photo-freeze-fix</td>
+<td>Non-blocking photo retry, stuck-photo auto-recovery, hardware
+watchdog</td>
+</tr>
 </tbody>
 </table>
 <hr />
-<h2>5. ESP32 Firmware</h2>
-<h3>5.1 Build Tool</h3>
-<p><strong>PlatformIO</strong> (VS Code extension). Open the <code>firmware/</code> folder in VS Code. Use the ✓ button to build and → to upload.</p>
-<h3>5.2 Libraries</h3>
+<h2 id="esp32-firmware">5. ESP32 Firmware</h2>
+<h3 id="build-tool">5.1 Build Tool</h3>
+<p><strong>PlatformIO</strong> (VS Code extension). Open the
+<code>firmware/</code> folder in VS Code. Use the tick button to build
+and arrow to upload.</p>
+<h3 id="libraries">5.2 Libraries</h3>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Library</th>
@@ -279,17 +337,23 @@
 </tr>
 <tr>
 <td>knolleary/PubSubClient</td>
-<td>MQTT (reserved for Phase 3)</td>
+<td>MQTT — receives doorbell ring trigger</td>
 </tr>
 <tr>
 <td>bodmer/TJpg_Decoder</td>
-<td>JPEG decoding for photo slideshow</td>
+<td>JPEG decoding for photo slideshow and doorbell image</td>
 </tr>
 </tbody>
 </table>
-<h3>5.3 Configuration</h3>
-<p>Edit <code>firmware/include/config.h</code> before flashing. This file is excluded from Git (credentials). Use <code>config.h.template</code> as a starting point on a new machine.</p>
+<h3 id="configuration">5.3 Configuration</h3>
+<p>Edit <code>firmware/include/config.h</code> before flashing. This
+file is excluded from Git (credentials). Use
+<code>config.h.template</code> as a starting point on a new machine.</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Setting</th>
@@ -322,6 +386,26 @@
 <td>5000</td>
 </tr>
 <tr>
+<td><code>MQTT_HOST</code></td>
+<td>MQTT broker IP (same as HA host)</td>
+</tr>
+<tr>
+<td><code>MQTT_PORT</code></td>
+<td>1883</td>
+</tr>
+<tr>
+<td><code>MQTT_USER</code> / <code>MQTT_PASS</code></td>
+<td>MQTT broker credentials</td>
+</tr>
+<tr>
+<td><code>MQTT_CLIENT_ID</code></td>
+<td><code>tft-display</code></td>
+</tr>
+<tr>
+<td><code>MQTT_TOPIC_DOORBELL</code></td>
+<td><code>tft/doorbell</code></td>
+</tr>
+<tr>
 <td><code>DASHBOARD_POLL_MS</code></td>
 <td>How often to refresh HA state (default 10000ms)</td>
 </tr>
@@ -329,13 +413,63 @@
 <td><code>SCREENSAVER_TIMEOUT</code></td>
 <td>Idle time before screensaver (default 60000ms)</td>
 </tr>
+<tr>
+<td><code>DOORBELL_TIMEOUT_MS</code></td>
+<td>How long to show doorbell image (default 60000ms)</td>
+</tr>
 </tbody>
 </table>
-<h3>5.4 Touch Calibration</h3>
-<p>On first boot, the display runs a touch calibration routine — touch each marker with the stylus. Calibration data is saved to the ESP32's non-volatile storage and is not repeated unless the device is erased.</p>
-<p>To force recalibration: in Arduino/PlatformIO, erase the flash (<code>pio run -t erase</code>) then reflash.</p>
+<h3 id="key-implementation-notes">5.4 Key Implementation Notes</h3>
+<ul>
+<li><strong>WiFi modem sleep disabled</strong> —
+<code>WiFi.setSleep(false)</code> is called before
+<code>WiFi.begin()</code>. Without this, the ESP32 enters modem sleep
+between packets, causing partial TCP reads at multiples of 1436 bytes
+(TCP MSS). This was the root cause of photo slideshow stalls.</li>
+<li><strong>HTTP connection reuse disabled</strong> —
+<code>http.setReuse(false)</code> + <code>Connection: close</code>
+header prevents stale keep-alive connections returning 0 bytes on
+reuse.</li>
+<li><strong>Manual read loop</strong> — photo and doorbell image reads
+use a manual while-loop with a hard deadline rather than
+<code>readBytes()</code>, allowing <code>mqttClient.loop()</code> to be
+called during the read so MQTT stays alive.</li>
+<li><strong>Doorbell priority</strong> — the
+<code>doorbellTriggered</code> flag is checked inside the photo read
+loop so a ring always interrupts a photo download immediately.</li>
+<li><strong>Doorbell timer reset</strong> — <code>doorbellTime</code> is
+reset to <code>millis()</code> when the image is successfully displayed,
+so the user gets the full <code>DOORBELL_TIMEOUT_MS</code> view time
+from when the image appears, not from when the bell rang.</li>
+<li><strong>Non-blocking photo retry</strong> —
+<code>showNextPhoto()</code> does not block on failure. Instead of
+<code>delay(2000)</code> + second attempt, a failed fetch sets
+<code>lastPhotoTime</code> 3 seconds behind so the loop’s own timer
+triggers the retry naturally. Touch stays fully responsive during the
+wait.</li>
+<li><strong>Stuck-photo auto-recovery</strong> —
+<code>lastPhotoSuccess</code> tracks the last time a photo was
+successfully drawn. If no successful photo has been shown in 60 seconds
+(<code>PHOTO_STUCK_MS</code>), the loop calls <code>checkWifi()</code>
+and forces an immediate retry. This handles cases where the NAS is
+unreachable or the TCP stack silently stalls.</li>
+<li><strong>Hardware watchdog</strong> —
+<code>esp_task_wdt_init(30, true)</code> initialises a 30-second
+hardware watchdog in <code>setup()</code>.
+<code>esp_task_wdt_reset()</code> is called at the top of every
+<code>loop()</code> iteration and inside the photo read loop. If the
+loop ever genuinely hard-stalls, the device reboots cleanly.</li>
+</ul>
+<h3 id="touch-calibration">5.5 Touch Calibration</h3>
+<p>On first boot, the display runs a touch calibration routine — touch
+each marker with the stylus. Calibration data is saved to the ESP32’s
+non-volatile storage and is not repeated unless the device is
+erased.</p>
+<p>To force recalibration: in PlatformIO, erase the flash
+(<code>pio run -t erase</code>) then reflash.</p>
 <hr />
-<h2>6. Home Assistant Entities</h2>
+<h2 id="home-assistant-setup">6. Home Assistant Setup</h2>
+<h3 id="entities-used">6.1 Entities Used</h3>
 <table>
 <thead>
 <tr>
@@ -372,20 +506,41 @@
 <td><code>climate.living_room</code></td>
 <td>Living room TRV (Tado)</td>
 </tr>
+<tr>
+<td><code>binary_sensor.front_door_bell_ringing</code></td>
+<td>Eufy doorbell ring sensor</td>
+</tr>
 </tbody>
 </table>
+<h3 id="doorbell-automation">6.2 Doorbell Automation</h3>
+<p>Trigger: <code>binary_sensor.front_door_bell_ringing</code> state →
+<code>on</code></p>
+<p>Action: publish MQTT message - Topic: <code>tft/doorbell</code> -
+Payload: <code>ring</code> - QoS: 1</p>
+<p>This is the only HA involvement in the doorbell flow. Image retrieval
+is handled entirely between the NAS and eufy-security-ws — HA is not
+used for image delivery.</p>
+<h3 id="mqtt-broker">6.3 MQTT Broker</h3>
+<p>Mosquitto add-on running on the HA Raspberry Pi (192.168.0.38:1883).
+User <code>mqtt-user</code> with appropriate password set in the
+Mosquitto config.</p>
 <hr />
-<h2>7. NAS Photo Server</h2>
-<h3>7.1 Location</h3>
+<h2 id="nas-photo-server">7. NAS Photo Server</h2>
+<h3 id="location">7.1 Location</h3>
 <ul>
-<li><strong>NAS:</strong> Greenbow DPX2800 at <code>ournas.local</code> / <code>192.168.0.248</code></li>
-<li><strong>Docker management:</strong> Portainer at port 9999</li>
-<li><strong>Source files on NAS:</strong> <code>/volume1/docker/nas-server/</code></li>
-<li><strong>Config folder:</strong> <code>/volume1/docker/tft-config/</code></li>
+<li><strong>NAS:</strong> UGREEN DXP2800 at
+<code>192.168.0.248</code></li>
+<li><strong>Docker management:</strong> UGREEN Docker (built-in) — SSH
+to NAS for rebuilds</li>
+<li><strong>Source files on NAS:</strong>
+<code>/volume1/docker/nas-server/</code></li>
+<li><strong>Config folder:</strong>
+<code>/volume1/docker/tft-config/</code></li>
 <li><strong>Photos root:</strong> <code>/volume1/Photos</code></li>
 </ul>
-<h3>7.2 Docker Setup</h3>
-<p>The server runs as a Docker container managed by Portainer. Project defined in <code>nas-server/docker-compose.yml</code>.</p>
+<h3 id="docker-setup">7.2 Docker Setup</h3>
+<p>The server runs as a Docker container. Project defined in
+<code>/volume1/docker/nas-server/docker-compose.yml</code>.</p>
 <p><strong>Volumes mounted into the container:</strong></p>
 <table>
 <thead>
@@ -406,18 +561,61 @@
 <td><code>/config</code></td>
 <td>Read-write (saves config)</td>
 </tr>
-<tr>
-<td><code>/volume1/docker/nas-server/app.py</code></td>
-<td><code>/app/app.py</code></td>
-<td>Read-only (live code updates)</td>
-</tr>
 </tbody>
 </table>
 <blockquote>
-<p>Mounting <code>app.py</code> as a volume means code updates take effect on container restart — no image rebuild needed.</p>
+<p><strong>Note:</strong> <code>app.py</code> and
+<code>requirements.txt</code> are baked into the Docker image at build
+time. To deploy code changes, upload the file via UGREEN file manager
+then rebuild:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ssh</span> Davidadmin@192.168.0.248</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> /volume1/docker/nas-server</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> compose build <span class="at">--no-cache</span> <span class="kw">&amp;&amp;</span> <span class="ex">docker</span> compose up <span class="at">-d</span></span></code></pre></div>
 </blockquote>
-<h3>7.3 API Endpoints</h3>
+<h3 id="python-dependencies">7.3 Python Dependencies</h3>
+<p><code>requirements.txt</code>:</p>
+<pre><code>flask==3.1.0
+pillow==11.2.1
+websocket-client==1.8.0</code></pre>
+<p><code>websocket-client</code> is required for the eufy-security-ws
+WebSocket listener. If it is missing from the image, the container logs
+will show
+<code>websocket-client not available — eufy WebSocket listener disabled</code>
+and doorbell images will fall back to HA fetch only.</p>
+<h3 id="eufy-security-ws-websocket-listener">7.4 eufy-security-ws
+WebSocket Listener</h3>
+<p>On startup, the NAS server connects to
+<code>ws://192.168.0.38:3000</code> (the eufy-security-ws add-on running
+on the HA Pi) and sends a <code>start_listening</code> command. It then
+listens for <code>property changed</code> events with
+<code>name == "picture"</code> from the T8214 doorbell device.</p>
+<p>When a picture event arrives: 1. Image bytes extracted from the
+Node.js Buffer payload 2. Image cropped to top half (T8214 is a
+composite 640×880 image — top half is the main front camera) 3. Resized
+to 320×240 and saved as JPEG 4. Cached in memory and a threading Event
+flag set</p>
+<p>The <code>/doorbell-snapshot</code> endpoint blocks waiting for this
+flag (up to 60s), then serves the cached image and clears the cache. The
+next ring starts with a clean slate.</p>
+<p>Connection drops are handled automatically — the listener thread
+reconnects every 15 seconds on failure.</p>
+<p><strong>eufy-security-ws add-on configuration (HA Pi):</strong> The
+station must be added via the add-on UI with
+<code>serial_number: T8030T23244602B4</code> and
+<code>ip_address: 192.168.0.129</code> (DHCP reservation set in router).
+This forces local P2P rather than cloud relay. Without this, the P2P
+client has no LAN IP and falls back to AWS relay servers, adding further
+latency. The <code>event_duration</code> config option controls how long
+binary sensors (e.g. <code>ringing</code>) stay triggered after an event
+— it does not affect snapshot timing.</p>
+<h3 id="api-endpoints">7.5 API Endpoints</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Endpoint</th>
@@ -437,6 +635,16 @@
 <td>Returns a random photo as 320×240 JPEG</td>
 </tr>
 <tr>
+<td><code>/doorbell-snapshot</code></td>
+<td>GET</td>
+<td>Blocks until fresh doorbell image ready (max 60s), returns JPEG</td>
+</tr>
+<tr>
+<td><code>/eufy-ws-status</code></td>
+<td>GET</td>
+<td>Diagnostic: WebSocket connection state and cache info</td>
+</tr>
+<tr>
 <td><code>/settings</code></td>
 <td>GET</td>
 <td>Returns <code>{"display_seconds": N}</code></td>
@@ -451,18 +659,74 @@
 <td>POST</td>
 <td>Saves new config (called by web UI)</td>
 </tr>
+<tr>
+<td><code>/test-doorbell</code></td>
+<td>GET</td>
+<td>Diagnostic: tests HA image_proxy connection</td>
+</tr>
 </tbody>
 </table>
-<h3>7.4 Configuration Web UI</h3>
-<p>Open <code>http://192.168.0.248:5000</code> in any browser on the local network to:
-- Tick/untick photo folders to include
-- Set seconds per photo
-- Toggle shuffle and include-subfolders
-- Preview a photo
-- Save and apply immediately</p>
-<hr />
-<h2>8. Dashboard Operation</h2>
+<h3 id="configuration-web-ui">7.6 Configuration Web UI</h3>
+<p>Open <code>http://192.168.0.248:5000</code> in any browser on the
+local network to: - Tick/untick photo folders to include - Set seconds
+per photo - Toggle shuffle and include-subfolders - Set HA host, port
+and token (needed for doorbell fallback) - Preview a photo or doorbell
+snapshot</p>
+<h3 id="photo-orientation">7.7 Photo Orientation</h3>
+<p>The server automatically corrects photos that have EXIF orientation
+metadata (e.g. photos taken on a modern phone held in portrait). This is
+handled by <code>ImageOps.exif_transpose()</code> in
+<code>app.py</code>.</p>
+<p>For older photos and scans with no EXIF orientation data, two one-off
+utility scripts are provided in <code>tools/</code>:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Script</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>audit_photo_orientation.py</code></td>
+<td>Scans the photo library and reports EXIF orientation status</td>
+</tr>
+<tr>
+<td><code>fix_photo_orientation.py</code></td>
+<td>Uses face detection (OpenCV) to fix orientation of suspect
+photos</td>
+</tr>
+</tbody>
+</table>
+<p><strong>To run these on a new machine:</strong></p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> venv ~/photo-tools-venv</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="bu">source</span> ~/photo-tools-venv/bin/activate</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install pillow opencv-python piexif</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Audit first</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> tools/audit_photo_orientation.py /Volumes/Photos</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Dry run fix (no files changed)</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> tools/fix_photo_orientation.py /Volumes/Photos</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Apply fixes</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> tools/fix_photo_orientation.py /Volumes/Photos <span class="at">--apply</span></span></code></pre></div>
+<blockquote>
+<p>The NAS must be mounted at <code>/Volumes/Photos</code> via SMB
+before running these scripts.</p>
+</blockquote>
+<hr />
+<h2 id="dashboard-operation">8. Dashboard Operation</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Area</th>
@@ -472,7 +736,7 @@
 <tbody>
 <tr>
 <td>Top bar</td>
-<td>"LIVING ROOM" title + WiFi status dot (green = connected)</td>
+<td>“LIVING ROOM” title + WiFi status dot (green = connected)</td>
 </tr>
 <tr>
 <td>Left half</td>
@@ -491,27 +755,75 @@
 <ul>
 <li>Dashboard polls Home Assistant every 10 seconds</li>
 <li>Only changed sections are redrawn (no flicker)</li>
-<li>Temperature changes made in the Tado app take 1–2 minutes to appear (Tado → HA sync delay)</li>
+<li>Temperature changes made in the Tado app take 1–2 minutes to appear
+(Tado → HA sync delay)</li>
 </ul>
 <hr />
-<h2>9. Screensaver Operation</h2>
+<h2 id="screensaver-operation">9. Screensaver Operation</h2>
 <ul>
-<li>After <strong>60 seconds</strong> with no touch, the display switches to photo slideshow</li>
+<li>After <strong>60 seconds</strong> with no touch, the display
+switches to photo slideshow</li>
 <li>Photos are fetched from the NAS server, pre-resized to 320×240</li>
 <li>Display duration per photo is set in the NAS web UI</li>
-<li><strong>Touch anywhere</strong> to return to the dashboard immediately</li>
+<li><strong>Touch anywhere</strong> to return to the dashboard
+immediately</li>
 </ul>
 <hr />
-<h2>10. Planned — Phase 3: Eufy Doorbell</h2>
-<p>When the doorbell rings:
-- Home Assistant (via Eufy integration) detects the event
-- HA sends a notification to the ESP32 (via MQTT or webhook)
-- The display switches to show a camera snapshot
-- Returns to previous mode after a timeout</p>
-<hr />
-<h2>11. Known Issues / Notes</h2>
+<h2 id="doorbell-operation">10. Doorbell Operation</h2>
 <ul>
-<li><strong>Tado sync lag:</strong> Temperature changes in Tado app take 1–2 minutes to reflect on the display. This is a Tado–HA sync limitation.</li>
-<li><strong>Resistive touch:</strong> Large buttons work well with a finger. For precise input use the supplied stylus.</li>
-<li><strong>Photo server startup:</strong> On NAS reboot, the container scans all selected photo directories before serving. With 18,000+ photos this takes a few seconds.</li>
-</ul></body></html>
+<li>When the doorbell rings, the ESP32 receives an MQTT message
+instantly</li>
+<li>Display switches to a black screen with a red “FRONT DOOR” header
+and “Image loading…” text</li>
+<li>The NAS blocks waiting for the eufy-security-ws picture event (up to
+60 seconds)</li>
+<li>When the image arrives it is sent to the ESP32 and displayed
+full-screen with the header overlay</li>
+<li>The display auto-dismisses after 60 seconds, or can be dismissed by
+touching the screen</li>
+<li>If no image arrives within 60 seconds, “Image not available” is
+shown for 10 seconds, then the display returns to its previous mode
+(dashboard or screensaver)</li>
+</ul>
+<p><strong>Note on image timing:</strong> The snapshot typically arrives
+approximately 60 seconds after the bell is pressed. This is a limitation
+of the eufy-security-ws library (v2.1.0), which uses a hardcoded
+60-second delay after receiving the ring event before querying the hub
+database for the snapshot — presumably to allow the hub time to write
+the file to disk. The P2P connection between the HA Pi and the Eufy hub
+is local (192.168.0.129), confirmed via debug logging. Reducing this
+delay would require patching the eufy-security-client library.</p>
+<hr />
+<h2 id="known-issues-notes">11. Known Issues / Notes</h2>
+<ul>
+<li><strong>Eufy image latency:</strong> Doorbell snapshots take
+approximately 60 seconds to arrive. This is a hardcoded delay in the
+eufy-security-client library (v2.1.0) — after receiving the ring event
+it waits ~60 seconds before querying the hub database for the snapshot.
+The P2P connection is local (192.168.0.129 — confirmed). The display
+shows “Image loading…” during this time. Reducing the delay would
+require patching the library.</li>
+<li><strong>Tado sync lag:</strong> Temperature changes in Tado app take
+1–2 minutes to reflect on the display. This is a Tado–HA sync
+limitation.</li>
+<li><strong>Resistive touch:</strong> Large buttons work well with a
+finger. For precise input use the supplied stylus.</li>
+<li><strong>Photo server startup:</strong> On NAS reboot, the container
+scans all selected photo directories before serving. With 18,000+ photos
+this takes a few seconds.</li>
+<li><strong>Portrait photos (old/scanned):</strong> Photos taken on
+modern phones are auto-corrected via EXIF orientation. Older scanned
+photos without EXIF data were corrected using the
+<code>tools/fix_photo_orientation.py</code> script. ~167 photos were
+fixed in the initial run.</li>
+<li><strong>NAS Docker rebuilds:</strong> Because <code>app.py</code> is
+baked into the image, any code change requires an SSH rebuild (not just
+a container restart via the UGREEN UI).</li>
+<li><strong>Photo screensaver freeze (resolved in v0.10):</strong> The
+screensaver occasionally stopped cycling photos and only recovered when
+the screen was touched. Root causes: a blocking <code>delay(2000)</code>
+in <code>showNextPhoto()</code> prevented touch input during retries;
+HTTP timeouts of 8s were too generous for a local JPEG; no automatic
+recovery if the NAS was silently unreachable. Fixed in v0.10 — see
+implementation notes above.</li>
+</ul>

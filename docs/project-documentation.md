@@ -1,6 +1,6 @@
 # TFT Living Room Display — Project Documentation
 
-**Version:** 0.9
+**Version:** 0.10
 **Date:** April 2026
 **Status:** Phases 1, 2 and 3 complete
 
@@ -123,6 +123,7 @@ A wall-mounted smart display for the living room built around an ESP32 microcont
 | v0.7-screensaver-working | Phase 2 complete — photo screensaver |
 | v0.8-photo-orientation | EXIF orientation fix, photo streaming improvements |
 | v0.9-doorbell-working | Phase 3 complete — Eufy doorbell integration |
+| v0.10-photo-freeze-fix | Non-blocking photo retry, stuck-photo auto-recovery, hardware watchdog |
 
 ---
 
@@ -169,6 +170,9 @@ Edit `firmware/include/config.h` before flashing. This file is excluded from Git
 - **Manual read loop** — photo and doorbell image reads use a manual while-loop with a hard deadline rather than `readBytes()`, allowing `mqttClient.loop()` to be called during the read so MQTT stays alive.
 - **Doorbell priority** — the `doorbellTriggered` flag is checked inside the photo read loop so a ring always interrupts a photo download immediately.
 - **Doorbell timer reset** — `doorbellTime` is reset to `millis()` when the image is successfully displayed, so the user gets the full `DOORBELL_TIMEOUT_MS` view time from when the image appears, not from when the bell rang.
+- **Non-blocking photo retry** — `showNextPhoto()` does not block on failure. Instead of `delay(2000)` + second attempt, a failed fetch sets `lastPhotoTime` 3 seconds behind so the loop's own timer triggers the retry naturally. Touch stays fully responsive during the wait.
+- **Stuck-photo auto-recovery** — `lastPhotoSuccess` tracks the last time a photo was successfully drawn. If no successful photo has been shown in 60 seconds (`PHOTO_STUCK_MS`), the loop calls `checkWifi()` and forces an immediate retry. This handles cases where the NAS is unreachable or the TCP stack silently stalls.
+- **Hardware watchdog** — `esp_task_wdt_init(30, true)` initialises a 30-second hardware watchdog in `setup()`. `esp_task_wdt_reset()` is called at the top of every `loop()` iteration and inside the photo read loop. If the loop ever genuinely hard-stalls, the device reboots cleanly.
 
 ### 5.5 Touch Calibration
 
@@ -364,3 +368,4 @@ python3 tools/fix_photo_orientation.py /Volumes/Photos --apply
 - **Photo server startup:** On NAS reboot, the container scans all selected photo directories before serving. With 18,000+ photos this takes a few seconds.
 - **Portrait photos (old/scanned):** Photos taken on modern phones are auto-corrected via EXIF orientation. Older scanned photos without EXIF data were corrected using the `tools/fix_photo_orientation.py` script. ~167 photos were fixed in the initial run.
 - **NAS Docker rebuilds:** Because `app.py` is baked into the image, any code change requires an SSH rebuild (not just a container restart via the UGREEN UI).
+- **Photo screensaver freeze (resolved in v0.10):** The screensaver occasionally stopped cycling photos and only recovered when the screen was touched. Root causes: a blocking `delay(2000)` in `showNextPhoto()` prevented touch input during retries; HTTP timeouts of 8s were too generous for a local JPEG; no automatic recovery if the NAS was silently unreachable. Fixed in v0.10 — see implementation notes above.

@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <TJpg_Decoder.h>
 #include <PubSubClient.h>
+#include <esp_task_wdt.h>
 #include "config.h"
 
 // ── Hardware ────────────────────────────────────────────────
@@ -55,11 +56,14 @@ struct DashState {
 DashState dash;
 DashState prev;   // previous state for smart redraw
 
-unsigned long lastPoll      = 0;
-unsigned long lastTouchTime = 0;
-unsigned long lastPhotoTime = 0;
-bool          screensaverActive  = false;
+unsigned long lastPoll        = 0;
+unsigned long lastTouchTime   = 0;
+unsigned long lastPhotoTime   = 0;
+unsigned long lastPhotoSuccess = 0;
+bool          screensaverActive   = false;
 int           photoDisplaySeconds = 10;
+
+#define PHOTO_STUCK_MS 60000UL  // auto-recover if no successful photo in 60s
 
 // ── Doorbell state ───────────────────────────────────────────
 volatile bool doorbellTriggered      = false;
@@ -267,7 +271,7 @@ void fetchPhotoSettings() {
 
 bool fetchPhoto() {
     HTTPClient http;
-    http.setTimeout(8000);
+    http.setTimeout(5000);
     http.setReuse(false);
     char url[128];
     snprintf(url, sizeof(url), "http://%s:%d%s", PHOTO_SERVER_HOST, PHOTO_SERVER_PORT, PHOTO_ENDPOINT);
@@ -281,8 +285,9 @@ bool fetchPhoto() {
         if (len > 0 && (size_t)len <= sizeof(jpegBuf)) {
             WiFiClient* stream = http.getStreamPtr();
             size_t got = 0;
-            unsigned long deadline = millis() + 8000;
+            unsigned long deadline = millis() + 5000;
             while (got < (size_t)len && millis() < deadline) {
+                esp_task_wdt_reset();
                 if (doorbellTriggered) {
                     Serial.println("Doorbell priority — aborting photo read");
                     break;
@@ -305,9 +310,10 @@ bool fetchPhoto() {
             if (got == (size_t)len) {
                 tft.fillScreen(TFT_BLACK);
                 TJpgDec.drawJpg(0, 0, jpegBuf, got);
+                lastPhotoSuccess = millis();
                 return true;
             }
-            Serial.println("Photo incomplete — retrying");
+            Serial.println("Photo incomplete — skipping");
         }
     } else {
         http.end();
@@ -320,18 +326,13 @@ void showNextPhoto() {
         lastPhotoTime = millis();
         return;
     }
-    // First attempt failed — wait 2s then retry with a fresh connection
-    delay(2000);
-    if (fetchPhoto()) {
-        lastPhotoTime = millis();
-        return;
-    }
-    // Both failed — back off before trying again
-    lastPhotoTime = millis() - ((unsigned long)photoDisplaySeconds * 1000UL) + 5000UL;
+    // Fetch failed — schedule a non-blocking retry in 3s so touch stays responsive
+    lastPhotoTime = millis() - ((unsigned long)photoDisplaySeconds * 1000UL) + 3000UL;
 }
 
 void enterScreensaver() {
     screensaverActive = true;
+    lastPhotoSuccess  = millis();  // start stuck-photo clock from screensaver entry
     fetchPhotoSettings();
     tft.fillScreen(TFT_BLACK);
     showNextPhoto();
@@ -618,6 +619,9 @@ void setup() {
     tft.setTextSize(1);
     tft.drawString("Connecting to WiFi...", SCREEN_W / 2, SCREEN_H / 2 + 10);
 
+    esp_task_wdt_init(30, true);  // 30s hardware watchdog — reboot if loop hard-stalls
+    esp_task_wdt_add(NULL);       // watch the main task
+
     WiFi.setSleep(false);   // disable modem sleep — prevents packet loss during photo transfers
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
@@ -648,6 +652,8 @@ void setup() {
 
 // ── Loop ────────────────────────────────────────────────────
 void loop() {
+    esp_task_wdt_reset();  // feed hardware watchdog every iteration
+
     // Keep MQTT alive
     if (!mqttClient.connected()) mqttConnect();
     mqttClient.loop();
@@ -671,6 +677,13 @@ void loop() {
     handleTouch();
 
     if (screensaverActive) {
+        // Stuck-photo recovery: if no successful photo in 60s, reconnect WiFi and retry
+        if (millis() - lastPhotoSuccess > PHOTO_STUCK_MS) {
+            Serial.println("Photo fetch stuck — recovering");
+            checkWifi();
+            lastPhotoTime    = 0;        // force immediate retry
+            lastPhotoSuccess = millis(); // reset window to avoid re-triggering immediately
+        }
         if (millis() - lastPhotoTime > (unsigned long)photoDisplaySeconds * 1000UL) {
             showNextPhoto();
         }
