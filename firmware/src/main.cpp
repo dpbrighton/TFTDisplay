@@ -509,7 +509,11 @@ void showDoorbellImage() {
     snprintf(url, sizeof(url), "http://%s:%d/doorbell-snapshot",
              PHOTO_SERVER_HOST, PHOTO_SERVER_PORT);
 
-    // Single request — NAS blocks until picture ready (up to 60s) then sends it
+    // Single request — NAS blocks until picture ready (up to 60s) then sends it.
+    // Unwatch from the hardware watchdog for the duration: the 65s timeout is
+    // intentional, not a hang, and would otherwise fire the 30s watchdog.
+    esp_task_wdt_delete(NULL);
+
     HTTPClient http;
     http.setTimeout(65000);   // 5s headroom over NAS 60s timeout
     http.setReuse(false);
@@ -546,6 +550,10 @@ void showDoorbellImage() {
         }
     }
     http.end();
+
+    // Re-add to watchdog now that the long blocking fetch is complete
+    esp_task_wdt_add(NULL);
+    esp_task_wdt_reset();
 
     if (imageShown) {
         // Header overlay on top of image

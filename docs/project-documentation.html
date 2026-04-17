@@ -826,4 +826,10 @@ in <code>showNextPhoto()</code> prevented touch input during retries;
 HTTP timeouts of 8s were too generous for a local JPEG; no automatic
 recovery if the NAS was silently unreachable. Fixed in v0.10 — see
 implementation notes above.</li>
+<li><strong>Doorbell watchdog reboot (resolved in v0.10):</strong> After
+adding the hardware watchdog in v0.10, ringing the doorbell caused an
+immediate reboot. The doorbell image fetch intentionally blocks for up
+to 65s waiting for the NAS snapshot — longer than the 30s watchdog
+window. Fixed by unregistering the main task from the watchdog before
+the fetch and re-registering immediately after.</li>
 </ul>
